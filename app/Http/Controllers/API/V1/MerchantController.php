@@ -2,15 +2,19 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Helpers\StorageHelper;
 use App\Http\Resources\MerchantResource;
 use App\Models\Merchant;
 use App\Models\User;
+use App\Support\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class MerchantController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
     /**
      * @OA\Get(
      *      path="/api/v1/merchants",
@@ -63,19 +67,31 @@ class MerchantController extends BaseController
     public function index(Request $request)
     {
         $perPage = min($request->get('per_page', 15), 100);
-        
+
         $query = Merchant::with(['parent', 'children', 'users']);
-        
+
+        $this->applyMerchantScope($query, $request, 'id');
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('address', 'like', "%{$search}%")
+                    ->orWhere('tel', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
         if ($request->has('status')) {
             $query->where('status', $request->status);
         }
-        
+
         if ($request->has('type')) {
             $query->where('type', $request->type);
         }
-        
+
         $merchants = $query->paginate($perPage);
-        
+
         return $this->sendPaginated(MerchantResource::collection($merchants), 'Merchants retrieved successfully');
     }
 
@@ -135,6 +151,26 @@ class MerchantController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        if (!$this->isSuperAdmin($request)) {
+            $accessibleIds = $this->accessibleMerchantIds($request);
+            if (empty($accessibleIds)) {
+                return $this->sendForbidden('No actor scope assigned to current user');
+            }
+
+            if ($request->filled('merchant_parent_id')) {
+                if (!$this->hasMerchantScopeAccess($request, (int) $request->merchant_parent_id)) {
+                    return $this->sendForbidden('You are not allowed to attach this actor outside your scope');
+                }
+            } else {
+                // Default child creation under user's direct actor scope when parent is omitted.
+                $primaryDirectMerchantId = $this->primaryDirectMerchantId($request);
+                if ($primaryDirectMerchantId === null) {
+                    return $this->sendForbidden('No actor scope assigned to current user');
+                }
+                $request->merge(['merchant_parent_id' => $primaryDirectMerchantId]);
+            }
+        }
+
         $merchantData = array_merge(
             $request->only([
                 'name', 'address', 'tel', 'email', 'merchant_parent_id', 'type', 'lat', 'long'
@@ -160,6 +196,12 @@ class MerchantController extends BaseController
                 }
             }
         }
+
+        AuditLogger::log($request, 'merchant.created', $merchant, [
+            'type' => $merchant->type,
+            'status' => $merchant->status,
+            'parent_id' => $merchant->merchant_parent_id,
+        ]);
 
         return $this->sendCreated(new MerchantResource($merchant->load('parent')), 'Merchant created successfully');
     }
@@ -200,6 +242,10 @@ class MerchantController extends BaseController
         
         if (!$merchant) {
             return $this->sendNotFound('Merchant not found');
+        }
+
+        if (!$this->hasMerchantScopeAccess(request(), (int) $merchant->id)) {
+            return $this->sendForbidden('You are not allowed to access this actor');
         }
         
         return $this->sendResponse(new MerchantResource($merchant), 'Merchant retrieved successfully');
@@ -254,6 +300,10 @@ class MerchantController extends BaseController
         if (!$merchant) {
             return $this->sendNotFound('Merchant not found');
         }
+
+        if (!$this->hasMerchantScopeAccess($request, (int) $merchant->id)) {
+            return $this->sendForbidden('You are not allowed to update this actor');
+        }
         
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|nullable|string|max:255',
@@ -273,10 +323,20 @@ class MerchantController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        if ($request->filled('merchant_parent_id') && !$this->hasMerchantScopeAccess($request, (int) $request->merchant_parent_id)) {
+            return $this->sendForbidden('You are not allowed to set this parent actor');
+        }
+
         $merchant->update($request->only([
             'name', 'address', 'entity_file', 'other_document_file', 
             'tel', 'email', 'merchant_parent_id', 'status', 'type', 'lat', 'long'
         ]));
+
+        AuditLogger::log($request, 'merchant.updated', $merchant, [
+            'type' => $merchant->type,
+            'status' => $merchant->status,
+            'parent_id' => $merchant->merchant_parent_id,
+        ]);
 
         return $this->sendUpdated(new MerchantResource($merchant->load('parent')), 'Merchant updated successfully');
     }
@@ -313,6 +373,15 @@ class MerchantController extends BaseController
         if (!$merchant) {
             return $this->sendNotFound('Merchant not found');
         }
+
+        if (!$this->hasMerchantScopeAccess(request(), (int) $merchant->id)) {
+            return $this->sendForbidden('You are not allowed to delete this actor');
+        }
+
+        AuditLogger::log(request(), 'merchant.deleted', $merchant, [
+            'type' => $merchant->type,
+            'status' => $merchant->status,
+        ]);
         
         $merchant->delete();
         
@@ -360,6 +429,10 @@ class MerchantController extends BaseController
             return $this->sendNotFound('Merchant not found');
         }
 
+        if (!$this->hasMerchantScopeAccess($request, (int) $merchant->id)) {
+            return $this->sendForbidden('You are not allowed to manage users for this actor');
+        }
+
         $validator = Validator::make($request->all(), [
             'user_ids' => 'required|array',
             'user_ids.*' => 'exists:users,id'
@@ -369,7 +442,27 @@ class MerchantController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        $users = User::query()->whereIn('id', $request->user_ids)->with('role')->get();
+        foreach ($users as $user) {
+            if ($this->isUserSuperAdmin($user)) {
+                continue;
+            }
+
+            $hasOtherActor = $user->merchants()
+                ->where('merchants.id', '!=', (int) $merchant->id)
+                ->exists();
+            if ($hasOtherActor) {
+                return $this->sendValidationError([
+                    'user_ids' => ["User {$user->id} already belongs to another actor. Non-super-admin users must be isolated to one actor."],
+                ]);
+            }
+        }
+
         $merchant->users()->syncWithoutDetaching($request->user_ids);
+
+        AuditLogger::log($request, 'merchant.users.attached', $merchant, [
+            'user_ids' => collect($request->user_ids)->map(fn ($id) => (int) $id)->values()->all(),
+        ]);
 
         return $this->sendResponse(new MerchantResource($merchant->load('users')), 'Users attached successfully');
     }
@@ -415,6 +508,10 @@ class MerchantController extends BaseController
             return $this->sendNotFound('Merchant not found');
         }
 
+        if (!$this->hasMerchantScopeAccess($request, (int) $merchant->id)) {
+            return $this->sendForbidden('You are not allowed to manage users for this actor');
+        }
+
         $validator = Validator::make($request->all(), [
             'user_ids' => 'required|array',
             'user_ids.*' => 'exists:users,id'
@@ -424,8 +521,33 @@ class MerchantController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        $users = User::query()->whereIn('id', $request->user_ids)->with('role')->get();
+        foreach ($users as $user) {
+            if ($this->isUserSuperAdmin($user)) {
+                continue;
+            }
+
+            $currentActorCount = $user->merchants()->count();
+            $isAttachedToCurrent = $user->merchants()->where('merchants.id', (int) $merchant->id)->exists();
+            if ($isAttachedToCurrent && $currentActorCount <= 1) {
+                return $this->sendValidationError([
+                    'user_ids' => ["User {$user->id} must keep at least one actor assignment."],
+                ]);
+            }
+        }
+
         $merchant->users()->detach($request->user_ids);
 
+        AuditLogger::log($request, 'merchant.users.detached', $merchant, [
+            'user_ids' => collect($request->user_ids)->map(fn ($id) => (int) $id)->values()->all(),
+        ]);
+
         return $this->sendResponse(new MerchantResource($merchant->load('users')), 'Users detached successfully');
+    }
+
+    private function isUserSuperAdmin(User $user): bool
+    {
+        $roleName = strtolower((string) ($user->role?->name ?? ''));
+        return str_contains($roleName, 'super admin');
     }
 }

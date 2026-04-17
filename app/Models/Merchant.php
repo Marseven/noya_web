@@ -71,10 +71,27 @@ class Merchant extends Model
 
     /**
      * Get the orders for the merchant.
+     * Legacy alias to destination orders.
      */
     public function orders()
     {
-        return $this->hasMany(Order::class);
+        return $this->hasMany(Order::class, 'merchant_id');
+    }
+
+    /**
+     * Orders emitted by this actor.
+     */
+    public function sourceOrders()
+    {
+        return $this->hasMany(Order::class, 'source_merchant_id');
+    }
+
+    /**
+     * Orders received by this actor.
+     */
+    public function destinationOrders()
+    {
+        return $this->hasMany(Order::class, 'destination_merchant_id');
     }
 
     /**

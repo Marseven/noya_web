@@ -3,9 +3,13 @@
 namespace App\Http\Controllers\API\V1;
 
 use App\Http\Resources\UserResource;
+use App\Models\Merchant;
+use App\Models\Role;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use PragmaRX\Google2FA\Google2FA;
@@ -114,7 +118,7 @@ class AuthController extends BaseController
         $token = $user->createToken('API Token', ['*'], now()->addHour());
 
         return $this->sendResponse([
-            'user' => new UserResource($user->load('role')),
+            'user' => new UserResource($user->load(['role.privileges', 'merchants'])),
             'token' => $token->plainTextToken,
             'token_type' => 'Bearer',
             'expires_at' => $token->accessToken->expires_at->toISOString()
@@ -132,13 +136,14 @@ class AuthController extends BaseController
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
-     *              required={"first_name","last_name","email","password","password_confirmation"},
+     *              required={"first_name","last_name","email","password","password_confirmation","merchant_id"},
      *              @OA\Property(property="first_name", type="string", example="John"),
      *              @OA\Property(property="last_name", type="string", example="Doe"),
      *              @OA\Property(property="email", type="string", format="email", example="user@example.com"),
      *              @OA\Property(property="password", type="string", format="password", example="password123"),
      *              @OA\Property(property="password_confirmation", type="string", format="password", example="password123"),
-     *              @OA\Property(property="role_id", type="integer", example=1)
+     *              @OA\Property(property="phone", type="string", example="+24101234567"),
+     *              @OA\Property(property="merchant_id", type="integer", example=1)
      *          ),
      *      ),
      *      @OA\Response(
@@ -159,23 +164,62 @@ class AuthController extends BaseController
             'last_name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
-            'role_id' => 'nullable|exists:roles,id'
+            'phone' => 'nullable|string|max:50',
+            'merchant_id' => 'required|exists:merchants,id',
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        $merchant = Merchant::query()
+            ->where('id', (int) $request->merchant_id)
+            ->where('status', 'APPROVED')
+            ->first();
+
+        if (!$merchant) {
+            return $this->sendValidationError([
+                'merchant_id' => ['Le marchand sélectionné est invalide ou non approuvé.'],
+            ]);
+        }
+
+        $defaultUserRole = Role::query()
+            ->whereRaw('LOWER(name) = ?', ['user'])
+            ->first();
+
+        if (!$defaultUserRole) {
+            return $this->sendValidationError([
+                'role_id' => ['Le rôle User est introuvable. Contactez un administrateur.'],
+            ]);
+        }
+
         $user = User::create([
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
+            'phone' => $request->phone,
             'email' => $request->email,
             'password' => Hash::make($request->password),
-            'role_id' => $request->role_id,
+            'role_id' => (int) $defaultUserRole->id,
             'status' => 'PENDING'
         ]);
 
-        return $this->sendCreated(new UserResource($user->load('role')), 'User registered successfully');
+        $user->merchants()->sync([(int) $merchant->id]);
+
+        return $this->sendCreated(new UserResource($user->load(['role.privileges', 'merchants'])), 'User registered successfully');
+    }
+
+    /**
+     * Public list of approved actors available during self-signup.
+     */
+    public function registrationMerchants()
+    {
+        $merchants = Merchant::query()
+            ->where('status', 'APPROVED')
+            ->select(['id', 'name', 'type'])
+            ->orderBy('name')
+            ->get();
+
+        return $this->sendResponse($merchants, 'Registration merchants retrieved successfully');
     }
 
     /**
@@ -310,6 +354,131 @@ class AuthController extends BaseController
     }
 
     /**
+     * Start password reset flow after validating user + 2FA setup.
+     */
+    public function forgotPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|exists:users,email',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $user = User::where('email', $request->email)->first();
+        if (!$user || !$user->is2FAEnabled()) {
+            return $this->sendError('2FA must be enabled before resetting password', [], 422);
+        }
+
+        $token = $this->storePasswordResetToken($user->email);
+
+        return $this->sendResponse([
+            'reset_token' => $token,
+            'expires_at' => $this->tokenExpiresAt(),
+        ], 'Password reset token generated successfully');
+    }
+
+    /**
+     * Check if a user can proceed to reset flow.
+     */
+    public function resetPasswordPrecheck(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $user = User::where('email', $request->email)->first();
+
+        return $this->sendResponse([
+            'two_fa_enabled' => (bool) ($user?->is2FAEnabled() ?? false),
+        ], 'Reset precheck completed');
+    }
+
+    /**
+     * Validate 2FA OTP and issue a temporary reset token.
+     */
+    public function verifyResetOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|exists:users,email',
+            'otp' => 'required|string|size:6',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $user = User::where('email', $request->email)->first();
+        if (!$user || !$user->is2FAEnabled()) {
+            return $this->sendError('2FA is not enabled for this account', [], 422);
+        }
+
+        $google2fa = new Google2FA();
+        $valid = $google2fa->verifyKey($user->google_2fa_secret, $request->otp);
+
+        if (!$valid) {
+            return $this->sendUnauthorized('Invalid OTP code');
+        }
+
+        $token = $this->storePasswordResetToken($user->email);
+
+        return $this->sendResponse([
+            'reset_token' => $token,
+            'expires_at' => $this->tokenExpiresAt(),
+        ], 'OTP verified successfully');
+    }
+
+    /**
+     * Complete password reset using a valid reset token.
+     */
+    public function resetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|exists:users,email',
+            'token' => 'required|string',
+            'password' => 'required|string|min:8|confirmed',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $table = config('auth.passwords.users.table', 'password_reset_tokens');
+        $record = DB::table($table)->where('email', $request->email)->first();
+
+        if (!$record || !isset($record->token)) {
+            return $this->sendError('Invalid or expired reset token', [], 422);
+        }
+
+        if ($this->isResetTokenExpired($record->created_at ?? null)) {
+            DB::table($table)->where('email', $request->email)->delete();
+            return $this->sendError('Reset token has expired', [], 422);
+        }
+
+        if (!Hash::check($request->token, $record->token)) {
+            return $this->sendError('Invalid or expired reset token', [], 422);
+        }
+
+        $user = User::where('email', $request->email)->first();
+        if (!$user) {
+            return $this->sendNotFound('User not found');
+        }
+
+        $user->password = Hash::make($request->password);
+        $user->remember_token = Str::random(60);
+        $user->save();
+
+        DB::table($table)->where('email', $request->email)->delete();
+
+        return $this->sendResponse(null, 'Password reset successfully');
+    }
+
+    /**
      * @OA\Post(
      *      path="/api/v1/auth/logout",
      *      operationId="logout",
@@ -354,7 +523,7 @@ class AuthController extends BaseController
      */
     public function profile(Request $request)
     {
-        $user = $request->user()->load('role', 'merchants');
+        $user = $request->user()->load(['role.privileges', 'merchants']);
         return $this->sendResponse(new UserResource($user), 'Profile retrieved successfully');
     }
 
@@ -392,15 +561,74 @@ class AuthController extends BaseController
         $validator = Validator::make($request->all(), [
             'first_name' => 'sometimes|string|max:255',
             'last_name' => 'sometimes|string|max:255',
-            'email' => 'sometimes|email|unique:users,email,' . $user->id
+            'email' => 'sometimes|email|unique:users,email,' . $user->id,
+            'phone' => 'sometimes|nullable|string|max:50',
+            'bio' => 'sometimes|nullable|string',
+            'avatar_url' => 'sometimes|nullable|string|max:2048',
+            'current_password' => 'required_with:password|string',
+            'password' => 'sometimes|string|min:8|confirmed',
+            'password_confirmation' => 'sometimes|string|min:8'
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
-        $user->update($request->only(['first_name', 'last_name', 'email']));
+        if ($request->filled('password') && !Hash::check((string) $request->current_password, (string) $user->password)) {
+            return $this->sendValidationError([
+                'current_password' => ['The current password is incorrect.']
+            ]);
+        }
 
-        return $this->sendUpdated(new UserResource($user->load('role')), 'Profile updated successfully');
+        $data = $request->only(['first_name', 'last_name', 'email', 'phone', 'bio', 'avatar_url']);
+
+        if ($request->filled('password')) {
+            $data['password'] = Hash::make((string) $request->password);
+        }
+
+        $user->update($data);
+
+        return $this->sendUpdated(new UserResource($user->load(['role.privileges', 'merchants'])), 'Profile updated successfully');
+    }
+
+    /**
+     * Store (or rotate) password reset token for a given email.
+     */
+    private function storePasswordResetToken(string $email): string
+    {
+        $table = config('auth.passwords.users.table', 'password_reset_tokens');
+        $token = Str::random(64);
+
+        DB::table($table)->updateOrInsert(
+            ['email' => $email],
+            [
+                'token' => Hash::make($token),
+                'created_at' => now(),
+            ]
+        );
+
+        return $token;
+    }
+
+    /**
+     * Get token expiry date in ISO format.
+     */
+    private function tokenExpiresAt(): string
+    {
+        $minutes = (int) config('auth.passwords.users.expire', 60);
+        return now()->addMinutes($minutes)->toISOString();
+    }
+
+    /**
+     * Determine whether a stored reset token is expired.
+     */
+    private function isResetTokenExpired($createdAt): bool
+    {
+        if (!$createdAt) {
+            return true;
+        }
+
+        $minutes = (int) config('auth.passwords.users.expire', 60);
+        return Carbon::parse($createdAt)->addMinutes($minutes)->isPast();
     }
 }

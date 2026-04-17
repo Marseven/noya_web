@@ -25,6 +25,11 @@ class CheckPrivileges
             ], 401);
         }
 
+        $roleName = strtolower((string) ($user->role?->name ?? ''));
+        if (str_contains($roleName, 'super admin')) {
+            return $next($request);
+        }
+
         if (!$user->hasPrivilege($privilege)) {
             return response()->json([
                 'success' => false,

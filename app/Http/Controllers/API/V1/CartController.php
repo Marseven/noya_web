@@ -2,13 +2,17 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Http\Resources\CartResource;
 use App\Models\Cart;
+use App\Models\Order;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class CartController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
     /**
      * @OA\Get(
      *      path="/api/v1/carts",
@@ -63,6 +67,17 @@ class CartController extends BaseController
         $perPage = min($request->get('per_page', 15), 100);
         
         $query = Cart::with(['article', 'order']);
+
+        if (!$this->isSuperAdmin($request)) {
+            $merchantIds = $this->accessibleMerchantIds($request);
+            if (empty($merchantIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereHas('order', function ($orderQuery) use ($merchantIds) {
+                    $orderQuery->whereIn('merchant_id', $merchantIds);
+                });
+            }
+        }
         
         if ($request->has('order_id')) {
             $query->where('order_id', $request->order_id);
@@ -115,6 +130,16 @@ class CartController extends BaseController
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        if (!$this->isSuperAdmin($request)) {
+            if (!$request->filled('order_id')) {
+                return $this->sendForbidden('Cart item must be linked to an order in your actor scope');
+            }
+            $order = Order::find($request->order_id);
+            if (!$order || !$this->hasMerchantScopeAccess($request, (int) $order->merchant_id)) {
+                return $this->sendForbidden('You are not allowed to add cart item for this order');
+            }
         }
 
         // Check if cart item already exists for this article-order combination
@@ -181,6 +206,10 @@ class CartController extends BaseController
         if (!$cart) {
             return $this->sendNotFound('Cart not found');
         }
+
+        if ($cart->order && !$this->hasMerchantScopeAccess(request(), (int) $cart->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to access this cart item');
+        }
         
         return $this->sendResponse(new CartResource($cart), 'Cart retrieved successfully');
     }
@@ -221,10 +250,14 @@ class CartController extends BaseController
      */
     public function update(Request $request, $id)
     {
-        $cart = Cart::find($id);
+        $cart = Cart::with('order')->find($id);
         
         if (!$cart) {
             return $this->sendNotFound('Cart not found');
+        }
+
+        if ($cart->order && !$this->hasMerchantScopeAccess($request, (int) $cart->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to update this cart item');
         }
         
         $validator = Validator::make($request->all(), [
@@ -235,6 +268,13 @@ class CartController extends BaseController
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        if ($request->filled('order_id')) {
+            $order = Order::find($request->order_id);
+            if (!$order || !$this->hasMerchantScopeAccess($request, (int) $order->merchant_id)) {
+                return $this->sendForbidden('You are not allowed to move this cart item outside your actor scope');
+            }
         }
 
         // If quantity is being updated, use the model method to handle recalculation
@@ -275,10 +315,14 @@ class CartController extends BaseController
      */
     public function destroy($id)
     {
-        $cart = Cart::find($id);
+        $cart = Cart::with('order')->find($id);
         
         if (!$cart) {
             return $this->sendNotFound('Cart not found');
+        }
+
+        if ($cart->order && !$this->hasMerchantScopeAccess(request(), (int) $cart->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to delete this cart item');
         }
         
         // Recalculate order amount before deleting

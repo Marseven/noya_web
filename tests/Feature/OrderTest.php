@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Article;
 use App\Models\Cart;
+use App\Models\DeliveryHistory;
 use App\Models\Merchant;
 use App\Models\Order;
 use App\Models\Role;
@@ -181,6 +182,63 @@ class OrderTest extends TestCase
                     'success' => false,
                     'message' => 'Order not found'
                 ]);
+    }
+
+    public function test_order_status_transition_creates_history_and_notification()
+    {
+        $merchant = Merchant::factory()->create();
+        $order = Order::factory()->create([
+            'merchant_id' => $merchant->id,
+            'destination_merchant_id' => $merchant->id,
+            'source_merchant_id' => $merchant->id,
+            'status' => 'INIT',
+        ]);
+
+        $response = $this->putJson("/api/v1/orders/{$order->id}", [
+            'status' => 'VALIDATED',
+        ], $this->headers);
+
+        $response->assertStatus(200);
+
+        $this->assertDatabaseHas('delivery_histories', [
+            'order_id' => $order->id,
+            'from_status' => 'INIT',
+            'to_status' => 'VALIDATED',
+        ]);
+
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $this->superAdmin->id,
+            'type' => 'order_validated',
+            'related_id' => $order->id,
+        ]);
+    }
+
+    public function test_can_get_order_history()
+    {
+        $merchant = Merchant::factory()->create();
+        $order = Order::factory()->create([
+            'merchant_id' => $merchant->id,
+            'destination_merchant_id' => $merchant->id,
+            'source_merchant_id' => $merchant->id,
+            'status' => 'INIT',
+        ]);
+
+        DeliveryHistory::create([
+            'order_id' => $order->id,
+            'merchant_id' => $merchant->id,
+            'changed_by' => $this->superAdmin->id,
+            'from_status' => 'INIT',
+            'to_status' => 'VALIDATED',
+            'changed_at' => now(),
+        ]);
+
+        $response = $this->getJson("/api/v1/orders/{$order->id}/history", $this->headers);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Order history retrieved successfully',
+            ]);
     }
 
     protected function tearDown(): void

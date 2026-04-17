@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Privilege;
 use App\Models\Role;
 use App\Models\User;
+use App\Models\Merchant;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
 use Tests\TestCase;
@@ -55,6 +56,36 @@ class RoleTest extends TestCase
                     'success' => true,
                     'message' => 'Roles retrieved successfully'
                 ]);
+    }
+
+    public function test_non_super_admin_cannot_see_super_admin_role_in_roles_list()
+    {
+        $adminRole = Role::where('name', 'Admin')->firstOrFail();
+        $merchant = Merchant::factory()->approved()->create();
+
+        $adminUser = User::factory()->create([
+            'email' => 'admin-role-scope@test.com',
+            'role_id' => $adminRole->id,
+            'status' => 'APPROVED',
+        ]);
+        $adminUser->merchants()->sync([$merchant->id]);
+
+        $adminToken = $adminUser->createToken('Admin Role Scope')->plainTextToken;
+        $adminHeaders = [
+            'Authorization' => 'Bearer ' . $adminToken,
+            'X-App-Key' => config('app.api_key'),
+            'X-App-Secret' => config('app.api_secret'),
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json'
+        ];
+
+        $response = $this->getJson('/api/v1/roles', $adminHeaders);
+        $response->assertStatus(200);
+
+        $roles = $response->json('data') ?? [];
+        $names = collect($roles)->pluck('name')->map(fn ($name) => strtolower((string) $name))->all();
+
+        $this->assertNotContains('super admin', $names);
     }
 
     public function test_can_create_role()

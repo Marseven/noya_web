@@ -2,13 +2,20 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Http\Resources\PaymentResource;
+use App\Models\DeliveryHistory;
+use App\Models\Order;
 use App\Models\Payment;
+use App\Support\AuditLogger;
+use App\Support\NotificationPublisher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class PaymentController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
     /**
      * @OA\Get(
      *      path="/api/v1/payments",
@@ -63,6 +70,17 @@ class PaymentController extends BaseController
         $perPage = min($request->get('per_page', 15), 100);
         
         $query = Payment::with(['order']);
+
+        if (!$this->isSuperAdmin($request)) {
+            $merchantIds = $this->accessibleMerchantIds($request);
+            if (empty($merchantIds)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereHas('order', function ($orderQuery) use ($merchantIds) {
+                    $orderQuery->whereIn('merchant_id', $merchantIds);
+                });
+            }
+        }
         
         if ($request->has('status')) {
             $query->where('status', $request->status);
@@ -127,6 +145,17 @@ class PaymentController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        if (!$this->isSuperAdmin($request)) {
+            if ($request->filled('order_id')) {
+                $order = Order::find($request->order_id);
+                if (!$order || !$this->hasMerchantScopeAccess($request, (int) $order->merchant_id)) {
+                    return $this->sendForbidden('You are not allowed to create payment for this order');
+                }
+            } else {
+                return $this->sendForbidden('Payment must be linked to an order in your actor scope');
+            }
+        }
+
         $payment = Payment::create(array_merge(
             $request->only([
                 'order_id', 'amount', 'partner_name', 'partner_fees', 
@@ -134,6 +163,12 @@ class PaymentController extends BaseController
             ]),
             ['status' => $request->get('status', 'INIT')]
         ));
+
+        AuditLogger::log($request, 'payment.created', $payment, [
+            'order_id' => $payment->order_id,
+            'status' => $payment->status,
+            'amount' => $payment->amount,
+        ]);
 
         return $this->sendCreated(new PaymentResource($payment->load('order')), 'Payment created successfully');
     }
@@ -174,6 +209,10 @@ class PaymentController extends BaseController
         
         if (!$payment) {
             return $this->sendNotFound('Payment not found');
+        }
+
+        if ($payment->order && !$this->hasMerchantScopeAccess(request(), (int) $payment->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to access this payment');
         }
         
         return $this->sendResponse(new PaymentResource($payment), 'Payment retrieved successfully');
@@ -220,10 +259,14 @@ class PaymentController extends BaseController
      */
     public function update(Request $request, $id)
     {
-        $payment = Payment::find($id);
+        $payment = Payment::with('order')->find($id);
         
         if (!$payment) {
             return $this->sendNotFound('Payment not found');
+        }
+
+        if ($payment->order && !$this->hasMerchantScopeAccess($request, (int) $payment->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to update this payment');
         }
         
         $validator = Validator::make($request->all(), [
@@ -241,10 +284,23 @@ class PaymentController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        if ($request->filled('order_id')) {
+            $order = Order::find($request->order_id);
+            if (!$order || !$this->hasMerchantScopeAccess($request, (int) $order->merchant_id)) {
+                return $this->sendForbidden('You are not allowed to move this payment outside your actor scope');
+            }
+        }
+
         $payment->update($request->only([
             'order_id', 'amount', 'partner_name', 'partner_fees', 
             'total_amount', 'status', 'partner_reference', 'callback_data'
         ]));
+
+        AuditLogger::log($request, 'payment.updated', $payment, [
+            'order_id' => $payment->order_id,
+            'status' => $payment->status,
+            'amount' => $payment->amount,
+        ]);
 
         return $this->sendUpdated(new PaymentResource($payment->load('order')), 'Payment updated successfully');
     }
@@ -276,13 +332,23 @@ class PaymentController extends BaseController
      */
     public function destroy($id)
     {
-        $payment = Payment::find($id);
+        $payment = Payment::with('order')->find($id);
         
         if (!$payment) {
             return $this->sendNotFound('Payment not found');
         }
+
+        if ($payment->order && !$this->hasMerchantScopeAccess(request(), (int) $payment->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to delete this payment');
+        }
         
         $payment->delete();
+
+        AuditLogger::log(request(), 'payment.deleted', $payment, [
+            'order_id' => $payment->order_id,
+            'status' => $payment->status,
+            'amount' => $payment->amount,
+        ]);
         
         return $this->sendDeleted('Payment deleted successfully');
     }
@@ -322,10 +388,14 @@ class PaymentController extends BaseController
      */
     public function confirmPayment(Request $request, $paymentId)
     {
-        $payment = Payment::find($paymentId);
+        $payment = Payment::with('order')->find($paymentId);
         
         if (!$payment) {
             return $this->sendNotFound('Payment not found');
+        }
+
+        if ($payment->order && !$this->hasMerchantScopeAccess($request, (int) $payment->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to confirm this payment');
         }
 
         if ($payment->status === 'PAID') {
@@ -350,8 +420,45 @@ class PaymentController extends BaseController
             $payment->callback_data = array_merge($payment->callback_data ?? [], $request->callback_data);
         }
 
+        $oldOrderStatus = $payment->order?->status;
+
         // Mark payment as paid (this will also update order status)
         $payment->markAsPaid();
+
+        $payment->refresh();
+        $payment->load('order');
+
+        if ($payment->order && $oldOrderStatus !== $payment->order->status) {
+            DeliveryHistory::create([
+                'order_id' => (int) $payment->order->id,
+                'merchant_id' => (int) ($payment->order->destination_merchant_id ?? $payment->order->merchant_id ?? 0) ?: null,
+                'changed_by' => (int) $request->user()->id,
+                'from_status' => $oldOrderStatus,
+                'to_status' => (string) $payment->order->status,
+                'note' => 'Status updated by payment confirmation',
+                'changed_at' => now(),
+            ]);
+        }
+
+        if ($payment->order) {
+            NotificationPublisher::publishForMerchants(
+                array_values(array_filter([
+                    $payment->order->source_merchant_id,
+                    $payment->order->destination_merchant_id,
+                    $payment->order->merchant_id,
+                ])),
+                'payment',
+                'Paiement confirmé',
+                "Paiement confirmé pour la commande {$payment->order->order_number}.",
+                (int) $payment->id
+            );
+        }
+
+        AuditLogger::log($request, 'payment.confirmed', $payment, [
+            'order_id' => $payment->order_id,
+            'status' => $payment->status,
+            'amount' => $payment->amount,
+        ]);
 
         return $this->sendResponse(new PaymentResource($payment->load('order')), 'Payment confirmed successfully');
     }

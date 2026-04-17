@@ -2,14 +2,19 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Http\Resources\StockResource;
 use App\Http\Resources\StockHistoryResource;
 use App\Models\Stock;
+use App\Support\AuditLogger;
+use App\Support\NotificationPublisher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class StockController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
     /**
      * @OA\Get(
      *      path="/api/v1/stocks",
@@ -64,6 +69,19 @@ class StockController extends BaseController
         $perPage = min($request->get('per_page', 15), 100);
         
         $query = Stock::with(['merchant', 'article']);
+
+        $this->applyMerchantScope($query, $request, 'merchant_id');
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function ($q) use ($search) {
+                $q->whereHas('merchant', function ($merchantQuery) use ($search) {
+                    $merchantQuery->where('name', 'like', "%{$search}%");
+                })->orWhereHas('article', function ($articleQuery) use ($search) {
+                    $articleQuery->where('name', 'like', "%{$search}%");
+                });
+            });
+        }
         
         if ($request->has('merchant_id')) {
             $query->where('merchant_id', $request->merchant_id);
@@ -120,6 +138,10 @@ class StockController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        if (!$this->hasMerchantScopeAccess($request, (int) $request->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to create stock for this actor');
+        }
+
         // Check if stock already exists for this merchant-article combination
         $existingStock = Stock::where('merchant_id', $request->merchant_id)
                              ->where('article_id', $request->article_id)
@@ -134,6 +156,12 @@ class StockController extends BaseController
             'article_id' => $request->article_id,
             'stock' => $request->get('stock', 0),
             'last_action_type' => $request->get('last_action_type', 'MANUALLY_ADD')
+        ]);
+
+        AuditLogger::log($request, 'stock.created', $stock, [
+            'merchant_id' => $stock->merchant_id,
+            'article_id' => $stock->article_id,
+            'stock' => $stock->stock,
         ]);
 
         return $this->sendCreated(new StockResource($stock->load(['merchant', 'article'])), 'Stock created successfully');
@@ -175,6 +203,10 @@ class StockController extends BaseController
         
         if (!$stock) {
             return $this->sendNotFound('Stock not found');
+        }
+
+        if (!$this->hasMerchantScopeAccess(request(), (int) $stock->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to access this stock');
         }
         
         return $this->sendResponse(new StockResource($stock), 'Stock retrieved successfully');
@@ -220,6 +252,10 @@ class StockController extends BaseController
         if (!$stock) {
             return $this->sendNotFound('Stock not found');
         }
+
+        if (!$this->hasMerchantScopeAccess($request, (int) $stock->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to update this stock');
+        }
         
         $validator = Validator::make($request->all(), [
             'stock' => 'sometimes|integer|min:0',
@@ -231,6 +267,13 @@ class StockController extends BaseController
         }
 
         $stock->update($request->only(['stock', 'last_action_type']));
+
+        AuditLogger::log($request, 'stock.updated', $stock, [
+            'merchant_id' => $stock->merchant_id,
+            'article_id' => $stock->article_id,
+            'stock' => $stock->stock,
+        ]);
+        $this->notifyLowStock($stock);
 
         return $this->sendUpdated(new StockResource($stock->load(['merchant', 'article'])), 'Stock updated successfully');
     }
@@ -267,8 +310,17 @@ class StockController extends BaseController
         if (!$stock) {
             return $this->sendNotFound('Stock not found');
         }
+
+        if (!$this->hasMerchantScopeAccess(request(), (int) $stock->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to delete this stock');
+        }
         
         $stock->delete();
+
+        AuditLogger::log(request(), 'stock.deleted', $stock, [
+            'merchant_id' => $stock->merchant_id,
+            'article_id' => $stock->article_id,
+        ]);
         
         return $this->sendDeleted('Stock deleted successfully');
     }
@@ -315,6 +367,10 @@ class StockController extends BaseController
             return $this->sendNotFound('Stock not found');
         }
 
+        if (!$this->hasMerchantScopeAccess($request, (int) $stock->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to add stock for this actor');
+        }
+
         $validator = Validator::make($request->all(), [
             'quantity' => 'required|integer|min:1',
             'action_type' => 'sometimes|in:MANUALLY_ADD,AUTO_ADD'
@@ -326,6 +382,12 @@ class StockController extends BaseController
 
         $actionType = $request->get('action_type', 'MANUALLY_ADD');
         $stock->addStock($request->quantity, $actionType);
+
+        AuditLogger::log($request, 'stock.added', $stock, [
+            'quantity' => (int) $request->quantity,
+            'action_type' => $actionType,
+            'new_stock' => $stock->stock,
+        ]);
 
         return $this->sendResponse(new StockResource($stock->load(['merchant', 'article'])), 'Stock added successfully');
     }
@@ -372,6 +434,10 @@ class StockController extends BaseController
             return $this->sendNotFound('Stock not found');
         }
 
+        if (!$this->hasMerchantScopeAccess($request, (int) $stock->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to withdraw stock for this actor');
+        }
+
         $validator = Validator::make($request->all(), [
             'quantity' => 'required|integer|min:1',
             'action_type' => 'sometimes|in:MANUALLY_WITHDRAW,AUTO_WITHDRAW'
@@ -383,6 +449,13 @@ class StockController extends BaseController
 
         $actionType = $request->get('action_type', 'MANUALLY_WITHDRAW');
         $stock->withdrawStock($request->quantity, $actionType);
+
+        AuditLogger::log($request, 'stock.withdrawn', $stock, [
+            'quantity' => (int) $request->quantity,
+            'action_type' => $actionType,
+            'new_stock' => $stock->stock,
+        ]);
+        $this->notifyLowStock($stock);
 
         return $this->sendResponse(new StockResource($stock->load(['merchant', 'article'])), 'Stock withdrawn successfully');
     }
@@ -437,6 +510,10 @@ class StockController extends BaseController
             return $this->sendNotFound('Stock not found');
         }
 
+        if (!$this->hasMerchantScopeAccess($request, (int) $stock->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to view stock history for this actor');
+        }
+
         $perPage = min($request->get('per_page', 15), 100);
         
         $histories = $stock->histories()
@@ -445,5 +522,21 @@ class StockController extends BaseController
                           ->paginate($perPage);
 
         return $this->sendPaginated(StockHistoryResource::collection($histories), 'Stock history retrieved successfully');
+    }
+
+    private function notifyLowStock(Stock $stock): void
+    {
+        if ($stock->stock > 10) {
+            return;
+        }
+
+        $articleName = $stock->article?->name ?? 'Article';
+        NotificationPublisher::publishForMerchants(
+            [(int) $stock->merchant_id],
+            'stock_low',
+            'Alerte stock faible',
+            "Stock faible pour {$articleName} (niveau: {$stock->stock}).",
+            (int) $stock->id
+        );
     }
 }

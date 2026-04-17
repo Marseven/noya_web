@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Merchant;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -17,12 +18,21 @@ class AuthTest extends TestCase
     {
         parent::setUp();
         
+        // Role used for self-signup default assignment
+        $this->userRole = Role::create([
+            'name' => 'User',
+            'description' => 'Default end-user role',
+            'is_active' => true
+        ]);
+
         // Create a basic role
         $this->role = Role::create([
             'name' => 'Test Role',
             'description' => 'Test role for testing',
             'is_active' => true
         ]);
+
+        $this->merchant = Merchant::factory()->approved()->create();
     }
 
     public function test_user_can_register()
@@ -33,7 +43,7 @@ class AuthTest extends TestCase
             'email' => 'john@example.com',
             'password' => 'password123',
             'password_confirmation' => 'password123',
-            'role_id' => $this->role->id
+            'merchant_id' => $this->merchant->id,
         ];
 
         $response = $this->postJson('/api/v1/auth/register', $userData, [
@@ -50,8 +60,35 @@ class AuthTest extends TestCase
         $this->assertDatabaseHas('users', [
             'email' => 'john@example.com',
             'first_name' => 'John',
-            'last_name' => 'Doe'
+            'last_name' => 'Doe',
+            'role_id' => $this->userRole->id,
         ]);
+
+        $user = User::where('email', 'john@example.com')->firstOrFail();
+        $this->assertDatabaseHas('merchant_users', [
+            'merchant_id' => $this->merchant->id,
+            'user_id' => $user->id,
+        ]);
+    }
+
+    public function test_registration_merchants_endpoint_returns_only_approved_merchants()
+    {
+        $approved = Merchant::factory()->approved()->create();
+        $pending = Merchant::factory()->create(['status' => 'PENDING']);
+
+        $response = $this->getJson('/api/v1/auth/registration-merchants', [
+            'X-App-Key' => config('app.api_key'),
+            'X-App-Secret' => config('app.api_secret')
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+            ]);
+
+        $returnedIds = collect($response->json('data'))->pluck('id')->all();
+        $this->assertContains($approved->id, $returnedIds);
+        $this->assertNotContains($pending->id, $returnedIds);
     }
 
     public function test_user_can_login_with_valid_credentials()

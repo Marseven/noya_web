@@ -2,14 +2,149 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Http\Resources\UserResource;
+use App\Models\Role;
 use App\Models\User;
+use App\Support\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 
 class UserController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
+    private function normalizeRoleName(?string $roleName): string
+    {
+        return strtolower(trim((string) preg_replace('/\s+/', ' ', (string) $roleName)));
+    }
+
+    private function roleRank(?string $roleName): int
+    {
+        $normalized = $this->normalizeRoleName($roleName);
+
+        if (str_contains($normalized, 'super admin')) {
+            return 400;
+        }
+        if ($normalized === 'admin') {
+            return 300;
+        }
+        if ($normalized === 'manager') {
+            return 200;
+        }
+        if ($normalized === 'user') {
+            return 100;
+        }
+
+        return 0;
+    }
+
+    private function canManageRoleName(?string $actingRoleName, ?string $targetRoleName): bool
+    {
+        if ($this->isSuperAdminRoleName($actingRoleName)) {
+            return true;
+        }
+
+        $actingRank = $this->roleRank($actingRoleName);
+        $targetRank = $this->roleRank($targetRoleName);
+
+        if ($actingRank === 300) { // Admin
+            return in_array($targetRank, [200, 100], true); // Manager, User
+        }
+
+        if ($actingRank === 200) { // Manager
+            return $targetRank === 100; // User only
+        }
+
+        return false;
+    }
+
+    private function canAssignRoleName(?string $actingRoleName, ?string $targetRoleName): bool
+    {
+        if ($this->isSuperAdminRoleName($actingRoleName)) {
+            return true;
+        }
+
+        $actingRank = $this->roleRank($actingRoleName);
+        $targetRank = $this->roleRank($targetRoleName);
+
+        if ($actingRank === 300) { // Admin
+            return in_array($targetRank, [300, 200, 100], true); // Admin, Manager, User
+        }
+
+        if ($actingRank === 200) { // Manager
+            return in_array($targetRank, [200, 100], true); // Manager, User
+        }
+
+        return false;
+    }
+
+    private function isSuperAdminRoleName(?string $roleName): bool
+    {
+        return str_contains(strtolower((string) $roleName), 'super admin');
+    }
+
+    private function isActorLeadershipRoleName(?string $roleName): bool
+    {
+        return in_array($this->normalizeRoleName($roleName), ['admin', 'manager'], true);
+    }
+
+    private function actorRoleLabel(?string $roleName): string
+    {
+        $normalized = $this->normalizeRoleName($roleName);
+        if ($normalized === 'admin') {
+            return 'admin';
+        }
+        if ($normalized === 'manager') {
+            return 'manager';
+        }
+
+        return 'utilisateur';
+    }
+
+    /**
+     * Count active users with the same role as target user, inside target user's actor(s).
+     */
+    private function activeSameRoleCountInUserActors(User $user, ?int $excludedUserId = null): int
+    {
+        $merchantIds = $user->merchants()
+            ->pluck('merchants.id')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($merchantIds)) {
+            return 0;
+        }
+
+        return User::query()
+            ->where('role_id', (int) $user->role_id)
+            ->where('status', 'APPROVED')
+            ->whereHas('merchants', function ($query) use ($merchantIds) {
+                $query->whereIn('merchants.id', $merchantIds);
+            })
+            ->when($excludedUserId !== null, function ($query) use ($excludedUserId) {
+                $query->where('users.id', '!=', $excludedUserId);
+            })
+            ->count();
+    }
+
+    private function activeSuperAdminCountExcluding(?int $excludedUserId = null): int
+    {
+        return User::query()
+            ->whereHas('role', function ($query) {
+                $query->whereRaw('LOWER(name) LIKE ?', ['%super admin%']);
+            })
+            ->where('status', 'APPROVED')
+            ->when($excludedUserId !== null, function ($query) use ($excludedUserId) {
+                $query->where('users.id', '!=', $excludedUserId);
+            })
+            ->count();
+    }
+
     /**
      * @OA\Get(
      *      path="/api/v1/users",
@@ -56,10 +191,32 @@ class UserController extends BaseController
     {
         $perPage = min($request->get('per_page', 15), 100);
         
-        $query = User::with(['role', 'merchants']);
+        $query = User::with(['role.privileges', 'merchants']);
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
         
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        }
+
+        if (!$this->isSuperAdmin($request)) {
+            $merchantIds = $this->accessibleMerchantIds($request);
+            $currentUserId = (int) $request->user()->id;
+            $query->where(function ($q) use ($merchantIds, $currentUserId) {
+                $q->where('id', $currentUserId);
+                if (!empty($merchantIds)) {
+                    $q->orWhereHas('merchants', function ($merchantQuery) use ($merchantIds) {
+                        $merchantQuery->whereIn('merchants.id', $merchantIds);
+                    });
+                }
+            });
         }
         
         $users = $query->paginate($perPage);
@@ -105,12 +262,73 @@ class UserController extends BaseController
             'last_name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8',
-            'role_id' => 'nullable|exists:roles,id',
-            'status' => 'sometimes|in:PENDING,BLOCKED,APPROVED,SUSPENDED'
+            'role_id' => 'required|exists:roles,id',
+            'status' => 'sometimes|in:PENDING,BLOCKED,APPROVED,SUSPENDED',
+            'merchant_ids' => 'sometimes|array',
+            'merchant_ids.*' => 'exists:merchants,id',
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $role = Role::find((int) $request->role_id);
+        $targetIsSuperAdmin = $this->isSuperAdminRoleName($role?->name);
+        if ($targetIsSuperAdmin && !$this->isSuperAdmin($request)) {
+            return $this->sendForbidden('Only a super admin can assign the Super Admin role');
+        }
+
+        if (
+            !$this->isSuperAdmin($request)
+            && !$this->canAssignRoleName($request->user()?->role?->name, $role?->name)
+        ) {
+            return $this->sendForbidden('Vous ne pouvez pas attribuer ce rôle');
+        }
+
+        $merchantIds = collect($request->input('merchant_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($targetIsSuperAdmin) {
+            // Super admin account can exist without actor assignment.
+            // Keep provided actor_ids if explicitly sent.
+            if (!empty($merchantIds) && !$this->isSuperAdmin($request)) {
+                return $this->sendForbidden('Only a super admin can assign actors to this role');
+            }
+        } else {
+            if (count($merchantIds) > 1) {
+                return $this->sendValidationError([
+                    'merchant_ids' => ['Only one actor can be assigned to non-super-admin roles.'],
+                ]);
+            }
+
+            if (!$this->isSuperAdmin($request)) {
+                $accessible = $this->accessibleMerchantIds($request);
+                if (empty($accessible)) {
+                    return $this->sendForbidden('No actor scope assigned to current user');
+                }
+                if (!empty($merchantIds)) {
+                    $invalid = array_diff($merchantIds, $accessible);
+                    if (!empty($invalid)) {
+                        return $this->sendForbidden('You are not allowed to assign user outside your actor scope');
+                    }
+                } else {
+                    $primaryDirectMerchantId = $this->primaryDirectMerchantId($request);
+                    if ($primaryDirectMerchantId === null) {
+                        return $this->sendForbidden('No actor scope assigned to current user');
+                    }
+                    $merchantIds = [$primaryDirectMerchantId];
+                }
+            } else {
+                if (empty($merchantIds)) {
+                    return $this->sendValidationError([
+                        'merchant_ids' => ['Actor assignment is required for non-super-admin roles.'],
+                    ]);
+                }
+            }
         }
 
         $user = User::create([
@@ -122,7 +340,17 @@ class UserController extends BaseController
             'status' => $request->get('status', 'PENDING')
         ]);
 
-        return $this->sendCreated(new UserResource($user->load('role')), 'User created successfully');
+        if (!empty($merchantIds)) {
+            $user->merchants()->sync($merchantIds);
+        }
+
+        AuditLogger::log($request, 'user.created', $user, [
+            'role_id' => $user->role_id,
+            'merchant_ids' => $merchantIds,
+            'status' => $user->status,
+        ]);
+
+        return $this->sendCreated(new UserResource($user->load(['role.privileges', 'merchants'])), 'User created successfully');
     }
 
     /**
@@ -157,10 +385,21 @@ class UserController extends BaseController
      */
     public function show($id)
     {
-        $user = User::with(['role', 'merchants'])->find($id);
+        $user = User::with(['role.privileges', 'merchants'])->find($id);
         
         if (!$user) {
             return $this->sendNotFound('User not found');
+        }
+
+        if (
+            !$this->isSuperAdmin(request())
+            && (int) request()->user()->id !== (int) $user->id
+        ) {
+            $accessible = $this->accessibleMerchantIds(request());
+            $hasAccess = !empty($accessible) && $user->merchants()->whereIn('merchants.id', $accessible)->exists();
+            if (!$hasAccess) {
+                return $this->sendForbidden('You are not allowed to access this user');
+            }
         }
         
         return $this->sendResponse(new UserResource($user), 'User retrieved successfully');
@@ -209,6 +448,31 @@ class UserController extends BaseController
         if (!$user) {
             return $this->sendNotFound('User not found');
         }
+
+        $actingUser = $request->user();
+        $actingIsSuperAdmin = $this->isSuperAdmin($request);
+        $actingRoleName = $actingUser?->role?->name;
+        $targetCurrentRoleName = $user->role?->name;
+        $isSelfUpdate = (int) $actingUser?->id === (int) $user->id;
+
+        if (
+            !$actingIsSuperAdmin
+            && !$isSelfUpdate
+        ) {
+            $accessible = $this->accessibleMerchantIds($request);
+            $hasAccess = !empty($accessible) && $user->merchants()->whereIn('merchants.id', $accessible)->exists();
+            if (!$hasAccess) {
+                return $this->sendForbidden('You are not allowed to update this user');
+            }
+        }
+
+        if (
+            !$actingIsSuperAdmin
+            && !$isSelfUpdate
+            && !$this->canManageRoleName($actingRoleName, $targetCurrentRoleName)
+        ) {
+            return $this->sendForbidden('Vous ne pouvez pas modifier cet utilisateur');
+        }
         
         $validator = Validator::make($request->all(), [
             'first_name' => 'sometimes|string|max:255',
@@ -216,11 +480,93 @@ class UserController extends BaseController
             'email' => 'sometimes|email|unique:users,email,' . $id,
             'password' => 'sometimes|string|min:8',
             'role_id' => 'sometimes|nullable|exists:roles,id',
-            'status' => 'sometimes|in:PENDING,BLOCKED,APPROVED,SUSPENDED'
+            'status' => 'sometimes|in:PENDING,BLOCKED,APPROVED,SUSPENDED',
+            'merchant_ids' => 'sometimes|array',
+            'merchant_ids.*' => 'exists:merchants,id',
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $targetRoleId = $request->filled('role_id') ? (int) $request->role_id : (int) $user->role_id;
+        $targetRole = $targetRoleId ? Role::find($targetRoleId) : $user->role;
+        $targetIsSuperAdmin = $this->isSuperAdminRoleName($targetRole?->name);
+        $currentIsSuperAdmin = $this->isSuperAdminRoleName($user->role?->name);
+        $targetStatus = strtoupper((string) ($request->input('status', $user->status)));
+        $currentRoleName = $user->role?->name;
+        $currentRoleNormalized = $this->normalizeRoleName($currentRoleName);
+        $targetRoleNormalized = $this->normalizeRoleName($targetRole?->name);
+        $currentMerchantIds = $user->merchants()
+            ->pluck('merchants.id')
+            ->map(fn ($merchantId) => (int) $merchantId)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $currentIsLeadershipRole = $this->isActorLeadershipRoleName($currentRoleName);
+        $isLastLeadershipInActor = $currentIsLeadershipRole
+            && strtoupper((string) $user->status) === 'APPROVED'
+            && $this->activeSameRoleCountInUserActors($user, (int) $user->id) === 0;
+
+        if (
+            !$actingIsSuperAdmin
+            && $isSelfUpdate
+            && $request->has('merchant_ids')
+        ) {
+            $requestedMerchantIds = collect($request->input('merchant_ids', []))
+                ->map(fn ($merchantId) => (int) $merchantId)
+                ->filter()
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+
+            $currentSortedMerchantIds = collect($currentMerchantIds)
+                ->sort()
+                ->values()
+                ->all();
+
+            if ($requestedMerchantIds !== $currentSortedMerchantIds) {
+                return $this->sendForbidden('Vous ne pouvez pas modifier votre propre acteur');
+            }
+        }
+
+        if ($targetIsSuperAdmin && !$this->isSuperAdmin($request)) {
+            return $this->sendForbidden('Only a super admin can assign the Super Admin role');
+        }
+
+        if (
+            !$actingIsSuperAdmin
+            && !$this->canAssignRoleName($actingRoleName, $targetRole?->name)
+        ) {
+            return $this->sendForbidden('Vous ne pouvez pas attribuer ce rôle');
+        }
+
+        if (!$actingIsSuperAdmin && $isSelfUpdate) {
+            if ($currentRoleNormalized === 'user' && $request->has('status')) {
+                return $this->sendForbidden('Vous ne pouvez pas changer votre statut');
+            }
+
+            if ($isLastLeadershipInActor) {
+                $roleLabel = $this->actorRoleLabel($currentRoleName);
+
+                if ($request->has('role_id') && $targetRoleNormalized !== $currentRoleNormalized) {
+                    return $this->sendForbidden("Vous êtes le dernier {$roleLabel} actif de cet acteur. Ajoutez d'abord un autre {$roleLabel} avant de changer votre rôle");
+                }
+
+                if ($request->has('status') && $targetStatus !== 'APPROVED') {
+                    return $this->sendForbidden("Vous êtes le dernier {$roleLabel} actif de cet acteur. Vous ne pouvez pas changer votre statut");
+                }
+            }
+        }
+
+        if (
+            $currentIsSuperAdmin
+            && !$targetIsSuperAdmin
+            && $this->activeSuperAdminCountExcluding((int) $user->id) === 0
+        ) {
+            return $this->sendForbidden('Cannot downgrade the last Super Admin account');
         }
 
         $data = $request->only(['first_name', 'last_name', 'email', 'role_id', 'status']);
@@ -228,10 +574,83 @@ class UserController extends BaseController
         if ($request->has('password')) {
             $data['password'] = Hash::make($request->password);
         }
-        
+
+        $shouldSyncMerchants = false;
+        $merchantIds = [];
+
+        if ($request->has('merchant_ids')) {
+            $merchantIds = collect($request->input('merchant_ids', []))
+                ->map(fn ($merchantId) => (int) $merchantId)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            if ($targetIsSuperAdmin) {
+                if (!empty($merchantIds) && !$this->isSuperAdmin($request)) {
+                    return $this->sendForbidden('Only a super admin can assign actors to this role');
+                }
+                $shouldSyncMerchants = true;
+            } else {
+                if (count($merchantIds) > 1) {
+                    return $this->sendValidationError([
+                        'merchant_ids' => ['Only one actor can be assigned to non-super-admin roles.'],
+                    ]);
+                }
+
+                if (empty($merchantIds)) {
+                    return $this->sendValidationError([
+                        'merchant_ids' => ['Actor assignment is required for non-super-admin roles.'],
+                    ]);
+                }
+
+                if (!$this->isSuperAdmin($request)) {
+                    $accessible = $this->accessibleMerchantIds($request);
+                    $invalid = array_diff($merchantIds, $accessible);
+                    if (!empty($invalid)) {
+                        return $this->sendForbidden('You are not allowed to assign user outside your actor scope');
+                    }
+                }
+                $shouldSyncMerchants = true;
+            }
+        } elseif (!$targetIsSuperAdmin) {
+            $existingMerchantIds = $currentMerchantIds;
+            if (empty($existingMerchantIds)) {
+                if ($this->isSuperAdmin($request)) {
+                    return $this->sendValidationError([
+                        'merchant_ids' => ['Actor assignment is required for non-super-admin roles.'],
+                    ]);
+                }
+                $accessible = $this->accessibleMerchantIds($request);
+                if (empty($accessible)) {
+                    return $this->sendForbidden('No actor scope assigned to current user');
+                }
+                $primaryDirectMerchantId = $this->primaryDirectMerchantId($request);
+                if ($primaryDirectMerchantId === null) {
+                    return $this->sendForbidden('No actor scope assigned to current user');
+                }
+                $merchantIds = [$primaryDirectMerchantId];
+                $shouldSyncMerchants = true;
+            } elseif (count($existingMerchantIds) > 1) {
+                // Self-heal legacy multi-actor assignment for non-super-admin users.
+                $merchantIds = [(int) $existingMerchantIds[0]];
+                $shouldSyncMerchants = true;
+            }
+        }
+
         $user->update($data);
 
-        return $this->sendUpdated(new UserResource($user->load('role')), 'User updated successfully');
+        if ($shouldSyncMerchants) {
+            $user->merchants()->sync($merchantIds);
+        }
+
+        AuditLogger::log($request, 'user.updated', $user, [
+            'role_id' => $user->role_id,
+            'status' => $user->status,
+            'merchant_ids' => $user->merchants()->pluck('merchants.id')->map(fn ($id) => (int) $id)->all(),
+        ]);
+
+        return $this->sendUpdated(new UserResource($user->load(['role.privileges', 'merchants'])), 'User updated successfully');
     }
 
     /**
@@ -266,8 +685,59 @@ class UserController extends BaseController
         if (!$user) {
             return $this->sendNotFound('User not found');
         }
+
+        $request = request();
+        $actingUser = $request->user();
+        $actingIsSuperAdmin = $this->isSuperAdmin($request);
+        $actingRoleName = $actingUser?->role?->name;
+
+        $isTargetSuperAdmin = $this->isSuperAdminRoleName($user->role?->name);
+        $isLastActiveSuperAdmin = $isTargetSuperAdmin
+            && $this->activeSuperAdminCountExcluding((int) $user->id) === 0;
+        $isSelfDelete = $actingUser && (int) $actingUser->id === (int) $user->id;
+
+        if ($isLastActiveSuperAdmin) {
+            return $this->sendForbidden('Tu es le dernier super admin, tu ne peux pas etre supprime');
+        }
+
+        if ($isSelfDelete) {
+            if ($actingIsSuperAdmin) {
+                return $this->sendForbidden('You cannot delete your own account');
+            }
+
+            if (
+                $this->isActorLeadershipRoleName($user->role?->name)
+                && strtoupper((string) $user->status) === 'APPROVED'
+                && $this->activeSameRoleCountInUserActors($user, (int) $user->id) === 0
+            ) {
+                $roleLabel = $this->actorRoleLabel($user->role?->name);
+                return $this->sendForbidden("Vous êtes le dernier {$roleLabel} actif de cet acteur. Suppression impossible");
+            }
+        } else {
+            if (
+                !$actingIsSuperAdmin
+                && !$this->canManageRoleName($actingRoleName, $user->role?->name)
+            ) {
+                return $this->sendForbidden('Vous ne pouvez pas supprimer cet utilisateur');
+            }
+        }
+
+        if (
+            !$actingIsSuperAdmin
+            && !$isSelfDelete
+        ) {
+            $accessible = $this->accessibleMerchantIds($request);
+            $hasAccess = !empty($accessible) && $user->merchants()->whereIn('merchants.id', $accessible)->exists();
+            if (!$hasAccess) {
+                return $this->sendForbidden('You are not allowed to delete this user');
+            }
+        }
         
         $user->delete();
+
+        AuditLogger::log($request, 'user.deleted', $user, [
+            'status' => $user->status,
+        ]);
         
         return $this->sendDeleted('User deleted successfully');
     }

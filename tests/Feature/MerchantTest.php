@@ -186,10 +186,12 @@ class MerchantTest extends TestCase
     public function test_can_detach_users_from_merchant()
     {
         $merchant = Merchant::factory()->create();
+        $otherMerchant = Merchant::factory()->create();
         $user = User::factory()->create(['status' => 'APPROVED']);
         
-        // First attach the user
+        // Attach user to two actors so detaching one still keeps one assignment.
         $merchant->users()->attach($user->id);
+        $otherMerchant->users()->attach($user->id);
 
         $response = $this->deleteJson("/api/v1/merchants/{$merchant->id}/users", [
             'user_ids' => [$user->id]

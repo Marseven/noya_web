@@ -20,6 +20,8 @@ class ComprehensiveApiTest extends TestCase
     use RefreshDatabase, WithFaker;
 
     protected $superAdmin;
+    protected $defaultMerchant;
+    protected $defaultUserRole;
     protected $token;
     protected $headers;
 
@@ -40,6 +42,9 @@ class ComprehensiveApiTest extends TestCase
             'role_id' => $superAdminRole->id,
             'status' => 'APPROVED'
         ]);
+
+        $this->defaultMerchant = Merchant::factory()->approved()->create();
+        $this->defaultUserRole = Role::where('name', 'User')->first();
 
         // Create token and headers
         $this->token = $this->superAdmin->createToken('Test Token')->plainTextToken;
@@ -241,6 +246,7 @@ class ComprehensiveApiTest extends TestCase
             'email' => 'testuser@example.com',
             'password' => 'password123',
             'role_id' => $roleId,
+            'merchant_ids' => [$this->defaultMerchant->id],
             'status' => 'APPROVED'
         ];
 
@@ -268,6 +274,8 @@ class ComprehensiveApiTest extends TestCase
             'last_name' => 'Doe',
             'email' => 'john.doe@example.com',
             'password' => 'password123',
+            'role_id' => $this->defaultUserRole->id,
+            'merchant_ids' => [$this->defaultMerchant->id],
             'status' => 'PENDING'
         ];
 

@@ -15,6 +15,8 @@ class Order extends Model
         'order_number',
         'amount',
         'merchant_id',
+        'source_merchant_id',
+        'destination_merchant_id',
         'status',
     ];
 
@@ -35,10 +37,27 @@ class Order extends Model
 
     /**
      * Get the merchant that owns the order.
+     * Legacy alias to destination actor.
      */
     public function merchant()
     {
-        return $this->belongsTo(Merchant::class);
+        return $this->belongsTo(Merchant::class, 'merchant_id');
+    }
+
+    /**
+     * Source actor that emitted the preorder.
+     */
+    public function sourceMerchant()
+    {
+        return $this->belongsTo(Merchant::class, 'source_merchant_id');
+    }
+
+    /**
+     * Destination actor that receives the preorder.
+     */
+    public function destinationMerchant()
+    {
+        return $this->belongsTo(Merchant::class, 'destination_merchant_id');
     }
 
     /**
@@ -55,6 +74,14 @@ class Order extends Model
     public function payments()
     {
         return $this->hasMany(Payment::class);
+    }
+
+    /**
+     * Delivery/status transition history for this order.
+     */
+    public function deliveryHistories()
+    {
+        return $this->hasMany(DeliveryHistory::class)->orderByDesc('changed_at');
     }
 
     /**

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Http\Resources\RoleResource;
 use App\Models\Role;
 use App\Models\Privilege;
@@ -10,6 +11,13 @@ use Illuminate\Support\Facades\Validator;
 
 class RoleController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
+    private function isSuperAdminRoleName(?string $roleName): bool
+    {
+        return str_contains(strtolower((string) $roleName), 'super admin');
+    }
+
     /**
      * @OA\Get(
      *      path="/api/v1/roles",
@@ -57,6 +65,10 @@ class RoleController extends BaseController
         $perPage = min($request->get('per_page', 15), 100);
         
         $query = Role::with(['privileges']);
+
+        if (!$this->isSuperAdmin($request)) {
+            $query->whereRaw('LOWER(name) NOT LIKE ?', ['%super admin%']);
+        }
         
         if ($request->has('is_active')) {
             $query->where('is_active', $request->boolean('is_active'));
@@ -97,6 +109,13 @@ class RoleController extends BaseController
      */
     public function store(Request $request)
     {
+        if (
+            !$this->isSuperAdmin($request)
+            && $this->isSuperAdminRoleName($request->input('name'))
+        ) {
+            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
+        }
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255|unique:roles,name',
             'description' => 'nullable|string',
@@ -153,6 +172,13 @@ class RoleController extends BaseController
         if (!$role) {
             return $this->sendNotFound('Role not found');
         }
+
+        if (
+            !$this->isSuperAdmin(request())
+            && $this->isSuperAdminRoleName($role->name)
+        ) {
+            return $this->sendForbidden('Accès refusé à ce rôle');
+        }
         
         return $this->sendResponse(new RoleResource($role), 'Role retrieved successfully');
     }
@@ -197,6 +223,20 @@ class RoleController extends BaseController
         
         if (!$role) {
             return $this->sendNotFound('Role not found');
+        }
+
+        if (
+            !$this->isSuperAdmin($request)
+            && $this->isSuperAdminRoleName($role->name)
+        ) {
+            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
+        }
+
+        if (
+            !$this->isSuperAdmin($request)
+            && $this->isSuperAdminRoleName($request->input('name'))
+        ) {
+            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
         }
         
         $validator = Validator::make($request->all(), [
@@ -246,6 +286,13 @@ class RoleController extends BaseController
         if (!$role) {
             return $this->sendNotFound('Role not found');
         }
+
+        if (
+            !$this->isSuperAdmin(request())
+            && $this->isSuperAdminRoleName($role->name)
+        ) {
+            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
+        }
         
         $role->delete();
         
@@ -291,6 +338,13 @@ class RoleController extends BaseController
         
         if (!$role) {
             return $this->sendNotFound('Role not found');
+        }
+
+        if (
+            !$this->isSuperAdmin($request)
+            && $this->isSuperAdminRoleName($role->name)
+        ) {
+            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
         }
 
         $validator = Validator::make($request->all(), [
@@ -346,6 +400,13 @@ class RoleController extends BaseController
         
         if (!$role) {
             return $this->sendNotFound('Role not found');
+        }
+
+        if (
+            !$this->isSuperAdmin($request)
+            && $this->isSuperAdminRoleName($role->name)
+        ) {
+            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
         }
 
         $validator = Validator::make($request->all(), [

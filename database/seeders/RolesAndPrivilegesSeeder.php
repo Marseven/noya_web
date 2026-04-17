@@ -151,14 +151,28 @@ class RolesAndPrivilegesSeeder extends Seeder
 
         // Assign most privileges to Admin (excluding force delete and some sensitive operations)
         $adminPrivileges = $allPrivileges->filter(function ($privilege) {
-            return !str_contains($privilege->nom, 'force_delete') && 
-                   !str_contains($privilege->nom, 'privileges.');
+            if (str_contains($privilege->nom, 'force_delete')) {
+                return false;
+            }
+
+            return !in_array($privilege->nom, [
+                'privileges.create',
+                'privileges.update',
+                'privileges.delete',
+                'privileges.restore',
+                'privileges.force_delete',
+            ], true);
         });
         $adminRole->privileges()->sync($adminPrivileges->pluck('id'));
 
         // Assign limited privileges to Manager
         $managerPrivileges = $allPrivileges->filter(function ($privilege) {
+            if ($privilege->nom === 'privileges.view') {
+                return false;
+            }
+
             return str_contains($privilege->nom, 'view') || 
+                   in_array($privilege->nom, ['users.create', 'users.update', 'users.delete', 'users.change_status'], true) ||
                    str_contains($privilege->nom, 'merchants.') ||
                    str_contains($privilege->nom, 'articles.') ||
                    str_contains($privilege->nom, 'stocks.') ||
@@ -169,12 +183,16 @@ class RolesAndPrivilegesSeeder extends Seeder
 
         // Assign basic privileges to User
         $userPrivileges = $allPrivileges->filter(function ($privilege) {
+            if ($privilege->nom === 'users.delete') {
+                return true;
+            }
+
             return str_contains($privilege->nom, '.view') && 
-                   (str_contains($privilege->nom, 'articles.') ||
-                    str_contains($privilege->nom, 'orders.') ||
-                    str_contains($privilege->nom, 'carts.') ||
-                    str_contains($privilege->nom, 'stocks.') ||
-                    str_contains($privilege->nom, 'payments.'));
+                (str_contains($privilege->nom, 'articles.') ||
+                 str_contains($privilege->nom, 'orders.') ||
+                 str_contains($privilege->nom, 'carts.') ||
+                 str_contains($privilege->nom, 'stocks.') ||
+                 str_contains($privilege->nom, 'payments.'));
         });
         $userRole->privileges()->sync($userPrivileges->pluck('id'));
 

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
 use App\Helpers\StorageHelper;
 use App\Http\Resources\ArticleResource;
 use App\Models\Article;
@@ -10,6 +11,8 @@ use Illuminate\Support\Facades\Validator;
 
 class ArticleController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
     /**
      * @OA\Get(
      *      path="/api/v1/articles",
@@ -64,6 +67,18 @@ class ArticleController extends BaseController
         $perPage = min($request->get('per_page', 15), 100);
         
         $query = Article::with(['merchant', 'stocks']);
+
+        $this->applyMerchantScope($query, $request, 'merchant_id');
+
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhereHas('merchant', function ($merchantQuery) use ($search) {
+                        $merchantQuery->where('name', 'like', "%{$search}%");
+                    });
+            });
+        }
         
         if ($request->has('is_active')) {
             $query->where('is_active', $request->boolean('is_active'));
@@ -120,6 +135,20 @@ class ArticleController extends BaseController
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        if (!$this->isSuperAdmin($request)) {
+            if ($request->filled('merchant_id')) {
+                if (!$this->hasMerchantScopeAccess($request, (int) $request->merchant_id)) {
+                    return $this->sendForbidden('You are not allowed to create article for this actor');
+                }
+            } else {
+                $primaryDirectMerchantId = $this->primaryDirectMerchantId($request);
+                if ($primaryDirectMerchantId === null) {
+                    return $this->sendForbidden('No actor scope assigned to current user');
+                }
+                $request->merge(['merchant_id' => $primaryDirectMerchantId]);
+            }
         }
 
         $articleData = array_merge(
@@ -194,6 +223,10 @@ class ArticleController extends BaseController
         if (!$article) {
             return $this->sendNotFound('Article not found');
         }
+
+        if ($article->merchant_id && !$this->hasMerchantScopeAccess(request(), (int) $article->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to access this article');
+        }
         
         return $this->sendResponse(new ArticleResource($article), 'Article retrieved successfully');
     }
@@ -241,6 +274,10 @@ class ArticleController extends BaseController
         if (!$article) {
             return $this->sendNotFound('Article not found');
         }
+
+        if ($article->merchant_id && !$this->hasMerchantScopeAccess($request, (int) $article->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to update this article');
+        }
         
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255|unique:articles,name,' . $id,
@@ -252,6 +289,10 @@ class ArticleController extends BaseController
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        if ($request->filled('merchant_id') && !$this->hasMerchantScopeAccess($request, (int) $request->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to move this article to another actor outside your scope');
         }
 
         $updateData = $request->only(['name', 'price', 'merchant_id', 'is_active']);
@@ -320,6 +361,10 @@ class ArticleController extends BaseController
         
         if (!$article) {
             return $this->sendNotFound('Article not found');
+        }
+
+        if ($article->merchant_id && !$this->hasMerchantScopeAccess(request(), (int) $article->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to delete this article');
         }
         
         // Delete associated photo file

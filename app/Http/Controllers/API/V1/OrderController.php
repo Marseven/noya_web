@@ -2,13 +2,20 @@
 
 namespace App\Http\Controllers\API\V1;
 
+use App\Http\Controllers\API\V1\Concerns\InteractsWithMerchantScope;
+use App\Http\Resources\DeliveryHistoryResource;
 use App\Http\Resources\OrderResource;
+use App\Models\DeliveryHistory;
 use App\Models\Order;
+use App\Support\AuditLogger;
+use App\Support\NotificationPublisher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
 class OrderController extends BaseController
 {
+    use InteractsWithMerchantScope;
+
     /**
      * @OA\Get(
      *      path="/api/v1/orders",
@@ -62,14 +69,45 @@ class OrderController extends BaseController
     {
         $perPage = min($request->get('per_page', 15), 100);
         
-        $query = Order::with(['merchant', 'carts', 'payments']);
+        $query = Order::with([
+            'merchant',
+            'sourceMerchant',
+            'destinationMerchant',
+            'carts',
+            'payments',
+            'deliveryHistories',
+        ]);
+
+        $this->applyMerchantScope($query, $request, 'merchant_id');
         
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
+        if ($request->filled('search')) {
+            $search = trim((string) $request->search);
+            $query->where(function ($q) use ($search) {
+                $q->where('order_number', 'like', "%{$search}%")
+                    ->orWhereHas('merchant', function ($merchantQuery) use ($search) {
+                        $merchantQuery->where('name', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('destinationMerchant', function ($merchantQuery) use ($search) {
+                        $merchantQuery->where('name', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        if ($request->filled('status')) {
+            $statuses = array_filter(array_map('trim', explode(',', (string) $request->status)));
+            if (count($statuses) > 1) {
+                $query->whereIn('status', $statuses);
+            } elseif (count($statuses) === 1) {
+                $query->where('status', $statuses[0]);
+            }
         }
         
         if ($request->has('merchant_id')) {
             $query->where('merchant_id', $request->merchant_id);
+        }
+
+        if ($request->has('destination_merchant_id')) {
+            $query->where('destination_merchant_id', $request->destination_merchant_id);
         }
         
         $orders = $query->orderBy('created_at', 'desc')->paginate($perPage);
@@ -111,19 +149,75 @@ class OrderController extends BaseController
             'order_number' => 'sometimes|string|max:255|unique:orders,order_number',
             'amount' => 'nullable|numeric|min:0',
             'merchant_id' => 'nullable|exists:merchants,id',
-            'status' => 'sometimes|in:INIT,PAID,PARTIALY_PAID,CANCELLED,REJECTED,DELIVERED'
+            'source_merchant_id' => 'nullable|exists:merchants,id',
+            'destination_merchant_id' => 'nullable|exists:merchants,id',
+            'status' => 'sometimes|in:INIT,VALIDATED,PAID,PARTIALY_PAID,CANCELLED,REJECTED,DELIVERED'
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
+        $destinationMerchantId = $request->filled('destination_merchant_id')
+            ? (int) $request->destination_merchant_id
+            : ($request->filled('merchant_id') ? (int) $request->merchant_id : null);
+
+        $sourceMerchantId = $request->filled('source_merchant_id')
+            ? (int) $request->source_merchant_id
+            : null;
+
+        if (!$this->isSuperAdmin($request)) {
+            $accessibleIds = $this->accessibleMerchantIds($request);
+            if (empty($accessibleIds)) {
+                return $this->sendForbidden('No actor scope assigned to current user');
+            }
+
+            if ($destinationMerchantId !== null && !$this->hasMerchantScopeAccess($request, $destinationMerchantId)) {
+                return $this->sendForbidden('You are not allowed to create order for this actor');
+            }
+            if ($sourceMerchantId !== null && !$this->hasMerchantScopeAccess($request, $sourceMerchantId)) {
+                return $this->sendForbidden('You are not allowed to set this source actor');
+            }
+
+            $primaryDirectMerchantId = $this->primaryDirectMerchantId($request);
+            if ($primaryDirectMerchantId === null) {
+                return $this->sendForbidden('No actor scope assigned to current user');
+            }
+
+            $destinationMerchantId = $destinationMerchantId ?? $primaryDirectMerchantId;
+            $sourceMerchantId = $sourceMerchantId ?? $primaryDirectMerchantId;
+        }
+
+        if ($destinationMerchantId === null) {
+            return $this->sendValidationError([
+                'destination_merchant_id' => ['Destination actor is required.'],
+            ]);
+        }
+
+        $sourceMerchantId = $sourceMerchantId ?? $destinationMerchantId;
+
         $order = Order::create(array_merge(
-            $request->only(['order_number', 'amount', 'merchant_id']),
-            ['status' => $request->get('status', 'INIT')]
+            $request->only(['order_number', 'amount']),
+            [
+                'merchant_id' => $destinationMerchantId,
+                'source_merchant_id' => $sourceMerchantId,
+                'destination_merchant_id' => $destinationMerchantId,
+                'status' => $request->get('status', 'INIT'),
+            ]
         ));
 
-        return $this->sendCreated(new OrderResource($order->load('merchant')), 'Order created successfully');
+        $this->createDeliveryHistory($order, null, (string) $order->status, $request->user()?->id);
+        $this->notifyOrderState($order, null, (string) $order->status);
+        AuditLogger::log($request, 'order.created', $order, [
+            'status' => $order->status,
+            'source_merchant_id' => $order->source_merchant_id,
+            'destination_merchant_id' => $order->destination_merchant_id,
+        ]);
+
+        return $this->sendCreated(
+            new OrderResource($order->load(['merchant', 'sourceMerchant', 'destinationMerchant', 'deliveryHistories'])),
+            'Order created successfully'
+        );
     }
 
     /**
@@ -158,10 +252,23 @@ class OrderController extends BaseController
      */
     public function show($id)
     {
-        $order = Order::with(['merchant', 'carts.article', 'payments'])->find($id);
+        $order = Order::with([
+            'merchant',
+            'sourceMerchant',
+            'destinationMerchant',
+            'carts.article',
+            'payments',
+            'deliveryHistories.merchant',
+            'deliveryHistories.changedBy',
+        ])->find($id);
         
         if (!$order) {
             return $this->sendNotFound('Order not found');
+        }
+
+        $scopeMerchantId = $order->destination_merchant_id ?? $order->merchant_id;
+        if ($scopeMerchantId && !$this->hasMerchantScopeAccess(request(), (int) $scopeMerchantId)) {
+            return $this->sendForbidden('You are not allowed to access this order');
         }
         
         return $this->sendResponse(new OrderResource($order), 'Order retrieved successfully');
@@ -209,21 +316,71 @@ class OrderController extends BaseController
         if (!$order) {
             return $this->sendNotFound('Order not found');
         }
+
+        $scopeMerchantId = $order->destination_merchant_id ?? $order->merchant_id;
+        if ($scopeMerchantId && !$this->hasMerchantScopeAccess($request, (int) $scopeMerchantId)) {
+            return $this->sendForbidden('You are not allowed to update this order');
+        }
         
         $validator = Validator::make($request->all(), [
             'order_number' => 'sometimes|string|max:255|unique:orders,order_number,' . $id,
             'amount' => 'sometimes|nullable|numeric|min:0',
             'merchant_id' => 'sometimes|nullable|exists:merchants,id',
-            'status' => 'sometimes|in:INIT,PAID,PARTIALY_PAID,CANCELLED,REJECTED,DELIVERED'
+            'source_merchant_id' => 'sometimes|nullable|exists:merchants,id',
+            'destination_merchant_id' => 'sometimes|nullable|exists:merchants,id',
+            'status' => 'sometimes|in:INIT,VALIDATED,PAID,PARTIALY_PAID,CANCELLED,REJECTED,DELIVERED'
         ]);
 
         if ($validator->fails()) {
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
-        $order->update($request->only(['order_number', 'amount', 'merchant_id', 'status']));
+        $targetDestinationMerchantId = $request->filled('destination_merchant_id')
+            ? (int) $request->destination_merchant_id
+            : ($request->filled('merchant_id') ? (int) $request->merchant_id : null);
+        $targetSourceMerchantId = $request->filled('source_merchant_id')
+            ? (int) $request->source_merchant_id
+            : null;
 
-        return $this->sendUpdated(new OrderResource($order->load('merchant')), 'Order updated successfully');
+        if ($targetDestinationMerchantId !== null && !$this->hasMerchantScopeAccess($request, $targetDestinationMerchantId)) {
+            return $this->sendForbidden('You are not allowed to move this order outside your actor scope');
+        }
+        if ($targetSourceMerchantId !== null && !$this->hasMerchantScopeAccess($request, $targetSourceMerchantId)) {
+            return $this->sendForbidden('You are not allowed to set this source actor');
+        }
+
+        $oldStatus = (string) $order->status;
+        $newStatus = $request->filled('status') ? (string) $request->status : $oldStatus;
+
+        $updateData = $request->only(['order_number', 'amount', 'status']);
+
+        if ($targetDestinationMerchantId !== null) {
+            $updateData['destination_merchant_id'] = $targetDestinationMerchantId;
+            $updateData['merchant_id'] = $targetDestinationMerchantId; // legacy compatibility
+        }
+
+        if ($request->has('source_merchant_id')) {
+            $updateData['source_merchant_id'] = $targetSourceMerchantId;
+        }
+
+        $order->update($updateData);
+
+        if ($oldStatus !== $newStatus) {
+            $this->createDeliveryHistory($order, $oldStatus, $newStatus, $request->user()?->id);
+            $this->notifyOrderState($order, $oldStatus, $newStatus);
+        }
+
+        AuditLogger::log($request, 'order.updated', $order, [
+            'from_status' => $oldStatus,
+            'to_status' => $newStatus,
+            'destination_merchant_id' => $order->destination_merchant_id,
+            'source_merchant_id' => $order->source_merchant_id,
+        ]);
+
+        return $this->sendUpdated(
+            new OrderResource($order->load(['merchant', 'sourceMerchant', 'destinationMerchant', 'deliveryHistories'])),
+            'Order updated successfully'
+        );
     }
 
     /**
@@ -258,6 +415,16 @@ class OrderController extends BaseController
         if (!$order) {
             return $this->sendNotFound('Order not found');
         }
+
+        $scopeMerchantId = $order->destination_merchant_id ?? $order->merchant_id;
+        if ($scopeMerchantId && !$this->hasMerchantScopeAccess(request(), (int) $scopeMerchantId)) {
+            return $this->sendForbidden('You are not allowed to delete this order');
+        }
+
+        AuditLogger::log(request(), 'order.deleted', $order, [
+            'status' => $order->status,
+            'destination_merchant_id' => $order->destination_merchant_id,
+        ]);
         
         $order->delete();
         
@@ -298,11 +465,96 @@ class OrderController extends BaseController
             return $this->sendNotFound('Order not found');
         }
 
+        $scopeMerchantId = $order->destination_merchant_id ?? $order->merchant_id;
+        if ($scopeMerchantId && !$this->hasMerchantScopeAccess(request(), (int) $scopeMerchantId)) {
+            return $this->sendForbidden('You are not allowed to calculate this order');
+        }
+
         $totalAmount = $order->calculateAmount();
 
+        AuditLogger::log(request(), 'order.calculated', $order, [
+            'calculated_amount' => $totalAmount,
+        ]);
+
         return $this->sendResponse([
-            'order' => new OrderResource($order->load(['merchant', 'carts.article'])),
+            'order' => new OrderResource($order->load(['merchant', 'sourceMerchant', 'destinationMerchant', 'carts.article'])),
             'calculated_amount' => $totalAmount
         ], 'Order amount calculated successfully');
+    }
+
+    /**
+     * Get delivery/status history for one order.
+     */
+    public function history(Request $request, $orderId)
+    {
+        $order = Order::find($orderId);
+        if (!$order) {
+            return $this->sendNotFound('Order not found');
+        }
+
+        $scopeMerchantId = $order->destination_merchant_id ?? $order->merchant_id;
+        if ($scopeMerchantId && !$this->hasMerchantScopeAccess($request, (int) $scopeMerchantId)) {
+            return $this->sendForbidden('You are not allowed to access this order history');
+        }
+
+        $perPage = min((int) $request->get('per_page', 15), 100);
+        $histories = $order->deliveryHistories()
+            ->with(['merchant', 'changedBy'])
+            ->orderByDesc('changed_at')
+            ->paginate($perPage);
+
+        return $this->sendPaginated(DeliveryHistoryResource::collection($histories), 'Order history retrieved successfully');
+    }
+
+    private function createDeliveryHistory(Order $order, ?string $fromStatus, string $toStatus, ?int $userId = null): void
+    {
+        DeliveryHistory::create([
+            'order_id' => (int) $order->id,
+            'merchant_id' => (int) ($order->destination_merchant_id ?? $order->merchant_id ?? 0) ?: null,
+            'changed_by' => $userId ? (int) $userId : null,
+            'from_status' => $fromStatus,
+            'to_status' => $toStatus,
+            'changed_at' => now(),
+        ]);
+    }
+
+    private function notifyOrderState(Order $order, ?string $fromStatus, string $toStatus): void
+    {
+        $merchantIds = array_values(array_filter([
+            $order->source_merchant_id,
+            $order->destination_merchant_id,
+            $order->merchant_id,
+        ]));
+
+        $orderNumber = (string) $order->order_number;
+        $type = 'preorder';
+        $title = 'Nouvelle précommande';
+        $message = "La commande {$orderNumber} a été créée.";
+
+        if ($toStatus === 'VALIDATED') {
+            $type = 'order_validated';
+            $title = 'Précommande validée';
+            $message = "La commande {$orderNumber} est validée.";
+        } elseif ($toStatus === 'DELIVERED') {
+            $type = 'delivery';
+            $title = 'Livraison confirmée';
+            $message = "La commande {$orderNumber} est marquée livrée.";
+        } elseif ($toStatus === 'CANCELLED') {
+            $type = 'order_cancelled';
+            $title = 'Précommande annulée';
+            $message = "La commande {$orderNumber} est annulée.";
+        } elseif ($fromStatus !== null && $fromStatus !== $toStatus) {
+            $type = 'order_status';
+            $title = 'Statut de commande mis à jour';
+            $message = "La commande {$orderNumber} est passée de {$fromStatus} à {$toStatus}.";
+        }
+
+        NotificationPublisher::publishForMerchants(
+            $merchantIds,
+            $type,
+            $title,
+            $message,
+            (int) $order->id
+        );
     }
 }
