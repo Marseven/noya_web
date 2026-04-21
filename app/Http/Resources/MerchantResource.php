@@ -22,6 +22,7 @@ class MerchantResource extends JsonResource
             'other_document_file' => $this->other_document_file,
             'tel' => $this->tel,
             'email' => $this->email,
+            'merchant_parent_id' => $this->merchant_parent_id,
             'status' => $this->status,
             'type' => $this->type,
             'lat' => $this->lat,

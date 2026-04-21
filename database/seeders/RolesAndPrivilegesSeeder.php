@@ -155,6 +155,14 @@ class RolesAndPrivilegesSeeder extends Seeder
                 return false;
             }
 
+            if ($privilege->nom === 'merchants.delete') {
+                return false;
+            }
+
+            if ($privilege->nom === 'roles.delete') {
+                return false;
+            }
+
             return !in_array($privilege->nom, [
                 'privileges.create',
                 'privileges.update',
@@ -168,6 +176,10 @@ class RolesAndPrivilegesSeeder extends Seeder
         // Assign limited privileges to Manager
         $managerPrivileges = $allPrivileges->filter(function ($privilege) {
             if ($privilege->nom === 'privileges.view') {
+                return false;
+            }
+
+            if (in_array($privilege->nom, ['merchants.delete', 'merchants.force_delete'], true)) {
                 return false;
             }
 

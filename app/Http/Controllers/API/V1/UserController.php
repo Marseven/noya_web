@@ -293,11 +293,13 @@ class UserController extends BaseController
             ->all();
 
         if ($targetIsSuperAdmin) {
-            // Super admin account can exist without actor assignment.
-            // Keep provided actor_ids if explicitly sent.
-            if (!empty($merchantIds) && !$this->isSuperAdmin($request)) {
-                return $this->sendForbidden('Only a super admin can assign actors to this role');
+            // Super admin account must stay neutral (no actor assignment).
+            if (!empty($merchantIds)) {
+                return $this->sendValidationError([
+                    'merchant_ids' => ['Un super admin ne peut être rattaché à aucun acteur.'],
+                ]);
             }
+            $merchantIds = [];
         } else {
             if (count($merchantIds) > 1) {
                 return $this->sendValidationError([
@@ -587,9 +589,12 @@ class UserController extends BaseController
                 ->all();
 
             if ($targetIsSuperAdmin) {
-                if (!empty($merchantIds) && !$this->isSuperAdmin($request)) {
-                    return $this->sendForbidden('Only a super admin can assign actors to this role');
+                if (!empty($merchantIds)) {
+                    return $this->sendValidationError([
+                        'merchant_ids' => ['Un super admin ne peut être rattaché à aucun acteur.'],
+                    ]);
                 }
+                $merchantIds = [];
                 $shouldSyncMerchants = true;
             } else {
                 if (count($merchantIds) > 1) {
@@ -636,6 +641,10 @@ class UserController extends BaseController
                 $merchantIds = [(int) $existingMerchantIds[0]];
                 $shouldSyncMerchants = true;
             }
+        } else {
+            // Super admin must never keep actor associations.
+            $merchantIds = [];
+            $shouldSyncMerchants = true;
         }
 
         $user->update($data);
@@ -700,11 +709,15 @@ class UserController extends BaseController
             return $this->sendForbidden('Tu es le dernier super admin, tu ne peux pas etre supprime');
         }
 
-        if ($isSelfDelete) {
-            if ($actingIsSuperAdmin) {
-                return $this->sendForbidden('You cannot delete your own account');
-            }
+        if (
+            !$isSelfDelete
+            && $actingIsSuperAdmin
+            && $isTargetSuperAdmin
+        ) {
+            return $this->sendForbidden('Vous ne pouvez pas supprimer un autre super admin');
+        }
 
+        if ($isSelfDelete) {
             if (
                 $this->isActorLeadershipRoleName($user->role?->name)
                 && strtoupper((string) $user->status) === 'APPROVED'
@@ -714,11 +727,13 @@ class UserController extends BaseController
                 return $this->sendForbidden("Vous êtes le dernier {$roleLabel} actif de cet acteur. Suppression impossible");
             }
         } else {
-            if (
-                !$actingIsSuperAdmin
-                && !$this->canManageRoleName($actingRoleName, $user->role?->name)
-            ) {
-                return $this->sendForbidden('Vous ne pouvez pas supprimer cet utilisateur');
+            if (!$actingIsSuperAdmin) {
+                $actingRank = $this->roleRank($actingRoleName);
+                $targetRank = $this->roleRank($user->role?->name);
+                $canDeleteLowerRole = $actingRank > 0 && $targetRank > 0 && $targetRank < $actingRank;
+                if (!$canDeleteLowerRole) {
+                    return $this->sendForbidden('Vous ne pouvez supprimer que votre propre compte ou un profil de niveau inférieur');
+                }
             }
         }
 

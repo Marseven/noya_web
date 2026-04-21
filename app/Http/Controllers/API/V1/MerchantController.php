@@ -169,6 +169,12 @@ class MerchantController extends BaseController
                 }
                 $request->merge(['merchant_parent_id' => $primaryDirectMerchantId]);
             }
+
+            $parentMerchant = Merchant::find((int) $request->merchant_parent_id);
+            $hierarchyError = $this->validateChildTypeAgainstParent($parentMerchant, (string) $request->type);
+            if ($hierarchyError !== null) {
+                return $hierarchyError;
+            }
         }
 
         $merchantData = array_merge(
@@ -327,6 +333,25 @@ class MerchantController extends BaseController
             return $this->sendForbidden('You are not allowed to set this parent actor');
         }
 
+        if (!$this->isSuperAdmin($request)) {
+            if ($request->has('merchant_parent_id') && $request->input('merchant_parent_id') === null) {
+                return $this->sendForbidden('Vous ne pouvez pas retirer l’acteur parent');
+            }
+
+            $targetParentId = $request->filled('merchant_parent_id')
+                ? (int) $request->merchant_parent_id
+                : (int) ($merchant->merchant_parent_id ?? 0);
+            $targetParent = $targetParentId > 0 ? Merchant::find($targetParentId) : null;
+            $targetType = (string) ($request->input('type', $merchant->type));
+
+            if ($targetParent !== null) {
+                $hierarchyError = $this->validateChildTypeAgainstParent($targetParent, $targetType);
+                if ($hierarchyError !== null) {
+                    return $hierarchyError;
+                }
+            }
+        }
+
         $merchant->update($request->only([
             'name', 'address', 'entity_file', 'other_document_file', 
             'tel', 'email', 'merchant_parent_id', 'status', 'type', 'lat', 'long'
@@ -368,17 +393,23 @@ class MerchantController extends BaseController
      */
     public function destroy($id)
     {
+        $request = request();
+
+        if (!$this->isSuperAdmin($request)) {
+            return $this->sendForbidden('Seul le super admin peut supprimer un acteur');
+        }
+
         $merchant = Merchant::find($id);
         
         if (!$merchant) {
             return $this->sendNotFound('Merchant not found');
         }
 
-        if (!$this->hasMerchantScopeAccess(request(), (int) $merchant->id)) {
+        if (!$this->hasMerchantScopeAccess($request, (int) $merchant->id)) {
             return $this->sendForbidden('You are not allowed to delete this actor');
         }
 
-        AuditLogger::log(request(), 'merchant.deleted', $merchant, [
+        AuditLogger::log($request, 'merchant.deleted', $merchant, [
             'type' => $merchant->type,
             'status' => $merchant->status,
         ]);
@@ -543,6 +574,44 @@ class MerchantController extends BaseController
         ]);
 
         return $this->sendResponse(new MerchantResource($merchant->load('users')), 'Users detached successfully');
+    }
+
+    private function merchantTypeRank(?string $type): int
+    {
+        $normalized = strtolower(trim((string) $type));
+
+        return match ($normalized) {
+            'distributor' => 400,
+            'wholesaler' => 300,
+            'subwholesaler' => 200,
+            'pointofsell' => 100,
+            default => 0,
+        };
+    }
+
+    private function validateChildTypeAgainstParent(?Merchant $parentMerchant, ?string $childType)
+    {
+        if (!$parentMerchant) {
+            return $this->sendValidationError([
+                'merchant_parent_id' => ['Le parent acteur est requis pour ce profil.'],
+            ]);
+        }
+
+        $parentRank = $this->merchantTypeRank($parentMerchant->type);
+        $childRank = $this->merchantTypeRank($childType);
+        if ($parentRank === 0 || $childRank === 0) {
+            return $this->sendValidationError([
+                'type' => ['Type d’acteur invalide pour la hiérarchie.'],
+            ]);
+        }
+
+        if ($childRank >= $parentRank) {
+            return $this->sendValidationError([
+                'type' => ['Le type choisi doit être inférieur au type de l’acteur parent.'],
+            ]);
+        }
+
+        return null;
     }
 
     private function isUserSuperAdmin(User $user): bool

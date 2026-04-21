@@ -281,19 +281,17 @@ class RoleController extends BaseController
      */
     public function destroy($id)
     {
+        $request = request();
+        if (!$this->isSuperAdmin($request)) {
+            return $this->sendForbidden('Seul le super admin peut supprimer un rôle');
+        }
+
         $role = Role::find($id);
         
         if (!$role) {
             return $this->sendNotFound('Role not found');
         }
 
-        if (
-            !$this->isSuperAdmin(request())
-            && $this->isSuperAdminRoleName($role->name)
-        ) {
-            return $this->sendForbidden('Seul un super admin peut gérer ce rôle');
-        }
-        
         $role->delete();
         
         return $this->sendDeleted('Role deleted successfully');
