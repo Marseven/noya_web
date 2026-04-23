@@ -310,6 +310,10 @@ class MerchantController extends BaseController
         if (!$this->hasMerchantScopeAccess($request, (int) $merchant->id)) {
             return $this->sendForbidden('You are not allowed to update this actor');
         }
+
+        if (!$this->isSuperAdmin($request) && $this->isDirectMerchantScope($request, (int) $merchant->id)) {
+            return $this->sendForbidden('Vous ne pouvez pas modifier votre acteur direct');
+        }
         
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|nullable|string|max:255',
@@ -395,10 +399,6 @@ class MerchantController extends BaseController
     {
         $request = request();
 
-        if (!$this->isSuperAdmin($request)) {
-            return $this->sendForbidden('Seul le super admin peut supprimer un acteur');
-        }
-
         $merchant = Merchant::find($id);
         
         if (!$merchant) {
@@ -407,6 +407,10 @@ class MerchantController extends BaseController
 
         if (!$this->hasMerchantScopeAccess($request, (int) $merchant->id)) {
             return $this->sendForbidden('You are not allowed to delete this actor');
+        }
+
+        if (!$this->isSuperAdmin($request) && $this->isDirectMerchantScope($request, (int) $merchant->id)) {
+            return $this->sendForbidden('Vous ne pouvez pas supprimer votre acteur direct');
         }
 
         AuditLogger::log($request, 'merchant.deleted', $merchant, [

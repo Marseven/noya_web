@@ -119,6 +119,23 @@ trait InteractsWithMerchantScope
     }
 
     /**
+     * Check whether a merchant is directly attached to the current user scope.
+     * For non-super-admin users, these direct actors are considered root scope actors.
+     */
+    protected function isDirectMerchantScope(Request $request, ?int $merchantId): bool
+    {
+        if ($merchantId === null) {
+            return false;
+        }
+
+        if ($this->isSuperAdmin($request)) {
+            return false;
+        }
+
+        return in_array((int) $merchantId, $this->directMerchantIds($request), true);
+    }
+
+    /**
      * Expand root merchant IDs with all descendants.
      *
      * @param array<int> $rootIds

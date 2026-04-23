@@ -155,10 +155,6 @@ class RolesAndPrivilegesSeeder extends Seeder
                 return false;
             }
 
-            if ($privilege->nom === 'merchants.delete') {
-                return false;
-            }
-
             if ($privilege->nom === 'roles.delete') {
                 return false;
             }
