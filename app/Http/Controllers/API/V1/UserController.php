@@ -700,13 +700,23 @@ class UserController extends BaseController
         $actingIsSuperAdmin = $this->isSuperAdmin($request);
         $actingRoleName = $actingUser?->role?->name;
 
-        $isTargetSuperAdmin = $this->isSuperAdminRoleName($user->role?->name);
+        $targetRoleName = $user->role?->name;
+        $isTargetSuperAdmin = $this->isSuperAdminRoleName($targetRoleName);
+        $isTargetLeadershipRole = $this->isActorLeadershipRoleName($targetRoleName);
         $isLastActiveSuperAdmin = $isTargetSuperAdmin
             && $this->activeSuperAdminCountExcluding((int) $user->id) === 0;
+        $isLastActiveLeadershipInActor = $isTargetLeadershipRole
+            && strtoupper((string) $user->status) === 'APPROVED'
+            && $this->activeSameRoleCountInUserActors($user, (int) $user->id) === 0;
         $isSelfDelete = $actingUser && (int) $actingUser->id === (int) $user->id;
 
         if ($isLastActiveSuperAdmin) {
-            return $this->sendForbidden('Tu es le dernier super admin, tu ne peux pas etre supprime');
+            return $this->sendForbidden('Impossible de supprimer le dernier super admin actif');
+        }
+
+        if ($isLastActiveLeadershipInActor) {
+            $roleLabel = $this->actorRoleLabel($targetRoleName);
+            return $this->sendForbidden("Impossible de supprimer le dernier {$roleLabel} actif de cet acteur");
         }
 
         if (
@@ -717,16 +727,7 @@ class UserController extends BaseController
             return $this->sendForbidden('Vous ne pouvez pas supprimer un autre super admin');
         }
 
-        if ($isSelfDelete) {
-            if (
-                $this->isActorLeadershipRoleName($user->role?->name)
-                && strtoupper((string) $user->status) === 'APPROVED'
-                && $this->activeSameRoleCountInUserActors($user, (int) $user->id) === 0
-            ) {
-                $roleLabel = $this->actorRoleLabel($user->role?->name);
-                return $this->sendForbidden("Vous êtes le dernier {$roleLabel} actif de cet acteur. Suppression impossible");
-            }
-        } else {
+        if (!$isSelfDelete) {
             if (!$actingIsSuperAdmin) {
                 $actingRank = $this->roleRank($actingRoleName);
                 $targetRank = $this->roleRank($user->role?->name);
