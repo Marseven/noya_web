@@ -165,6 +165,45 @@ class ExportTest extends TestCase
         $this->assertEquals('articles', $response->json('data.type'));
     }
 
+    public function test_can_generate_users_csv_export()
+    {
+        User::factory()->count(2)->create();
+
+        $response = $this->postJson('/api/v1/exports/generate', [
+            'type' => 'users',
+            'format' => 'csv',
+        ], $this->adminHeaders);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Export generated successfully',
+            ]);
+
+        $this->assertStringEndsWith('.csv', $response->json('data.file_name'));
+        $this->assertEquals('csv', $response->json('data.format'));
+    }
+
+    public function test_can_generate_users_pdf_export_and_download()
+    {
+        User::factory()->count(2)->create();
+
+        $generateResponse = $this->postJson('/api/v1/exports/generate', [
+            'type' => 'users',
+            'format' => 'pdf',
+        ], $this->adminHeaders);
+
+        $generateResponse->assertStatus(200);
+        $this->assertStringEndsWith('.pdf', $generateResponse->json('data.file_name'));
+        $this->assertEquals('pdf', $generateResponse->json('data.format'));
+
+        $token = basename((string) $generateResponse->json('data.download_url'));
+        $downloadResponse = $this->get("/api/v1/exports/download/{$token}");
+
+        $downloadResponse->assertStatus(200);
+        $this->assertEquals('application/pdf', $downloadResponse->headers->get('Content-Type'));
+    }
+
     public function test_export_requires_proper_privileges()
     {
         $response = $this->postJson('/api/v1/exports/generate', [

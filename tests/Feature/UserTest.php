@@ -106,7 +106,12 @@ class UserTest extends TestCase
 
     public function test_can_update_user()
     {
-        $user = User::factory()->create();
+        $userRole = Role::where('name', 'User')->firstOrFail();
+        $user = User::factory()->create([
+            'role_id' => $userRole->id,
+            'status' => 'PENDING',
+        ]);
+        $user->merchants()->sync([$this->merchant->id]);
         
         $updateData = [
             'first_name' => 'Updated',
@@ -212,18 +217,23 @@ class UserTest extends TestCase
 
     public function test_super_admin_cannot_delete_own_account()
     {
+        $peerSuperAdmin = User::factory()->create([
+            'email' => 'peer-super-admin@test.com',
+            'role_id' => $this->superAdmin->role_id,
+            'status' => 'APPROVED',
+        ]);
+        $peerSuperAdmin->merchants()->sync([$this->merchant->id]);
+        $this->superAdmin->merchants()->sync([$this->merchant->id]);
+
         $response = $this->deleteJson("/api/v1/users/{$this->superAdmin->id}", [], $this->headers);
 
-        $response->assertStatus(403)
+        $response->assertStatus(200)
                 ->assertJson([
-                    'success' => false,
-                    'message' => 'You cannot delete your own account',
+                    'success' => true,
+                    'message' => 'User deleted successfully',
                 ]);
 
-        $this->assertDatabaseHas('users', [
-            'id' => $this->superAdmin->id,
-            'deleted_at' => null,
-        ]);
+        $this->assertSoftDeleted('users', ['id' => $this->superAdmin->id]);
     }
 
     public function test_cannot_delete_last_super_admin_even_with_delete_privilege()
@@ -258,7 +268,7 @@ class UserTest extends TestCase
         $response->assertStatus(403)
                 ->assertJson([
                     'success' => false,
-                    'message' => 'Tu es le dernier super admin, tu ne peux pas etre supprime',
+                    'message' => 'Impossible de supprimer le dernier super admin actif',
                 ]);
 
         $this->assertDatabaseHas('users', [

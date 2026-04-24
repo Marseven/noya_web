@@ -8,8 +8,10 @@ use App\Exports\OrdersExport;
 use App\Exports\UsersExport;
 use App\Models\ExportToken;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Facades\Excel;
+use Maatwebsite\Excel\Excel as ExcelWriter;
 
 class ExportController extends BaseController
 {
@@ -111,6 +113,7 @@ class ExportController extends BaseController
     {
         $validator = Validator::make($request->all(), [
             'type' => 'required|string|in:users,merchants,orders,articles',
+            'format' => 'sometimes|string|in:xlsx,csv,pdf',
             'from_date' => 'sometimes|date',
             'to_date' => 'sometimes|date|after_or_equal:from_date',
             'status' => 'sometimes|string',
@@ -124,6 +127,7 @@ class ExportController extends BaseController
         }
 
         $type = $request->type;
+        $format = strtolower((string) $request->input('format', 'xlsx'));
         $user = auth()->user();
 
         // Check privileges based on export type
@@ -135,7 +139,7 @@ class ExportController extends BaseController
         try {
             // Generate filename
             $timestamp = now()->format('Y-m-d_H-i-s');
-            $filename = "{$type}_export_{$timestamp}.xlsx";
+            $filename = "{$type}_export_{$timestamp}.{$format}";
             
             // Create export based on type
             $export = $this->createExport($type, $request->all());
@@ -143,8 +147,13 @@ class ExportController extends BaseController
             // Generate file path in exports directory
             $filePath = "exports/{$filename}";
             
-            // Store the Excel file
-            Excel::store($export, $filePath, 'local');
+            if ($format === 'pdf') {
+                $pdfContent = $this->buildSimplePdfFromExport($export, strtoupper($type) . ' EXPORT');
+                Storage::disk('local')->put($filePath, $pdfContent);
+            } else {
+                $writerType = $format === 'csv' ? ExcelWriter::CSV : ExcelWriter::XLSX;
+                Excel::store($export, $filePath, 'local', $writerType);
+            }
             
             // Create one-time download token
             $exportToken = ExportToken::createToken(
@@ -159,7 +168,8 @@ class ExportController extends BaseController
                 'download_url' => url("/api/v1/exports/download/{$exportToken->token}"),
                 'expires_at' => $exportToken->expires_at->toISOString(),
                 'file_name' => $filename,
-                'type' => $type
+                'type' => $type,
+                'format' => $format
             ], 'Export generated successfully');
             
         } catch (\Exception $e) {
@@ -233,7 +243,7 @@ class ExportController extends BaseController
         
         try {
             // Check if file exists
-            if (!\Storage::disk('local')->exists($exportToken->file_path)) {
+            if (!Storage::disk('local')->exists($exportToken->file_path)) {
                 return $this->sendError('Export file not found', [], 404);
             }
             
@@ -241,14 +251,16 @@ class ExportController extends BaseController
             $exportToken->markAsUsed();
             
             // Get file content and info
-            $fileContent = \Storage::disk('local')->get($exportToken->file_path);
+            $fileContent = Storage::disk('local')->get($exportToken->file_path);
             $fileName = basename($exportToken->file_path);
+            $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            $contentType = $this->detectContentType($extension);
             
             // Clean up the file after download
-            \Storage::disk('local')->delete($exportToken->file_path);
+            Storage::disk('local')->delete($exportToken->file_path);
             
             return response($fileContent)
-                ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                ->header('Content-Type', $contentType)
                 ->header('Content-Disposition', 'attachment; filename="' . $fileName . '"')
                 ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
                 ->header('Pragma', 'no-cache')
@@ -327,6 +339,7 @@ class ExportController extends BaseController
                 'id' => $export->id,
                 'export_type' => $export->export_type,
                 'file_name' => basename($export->file_path),
+                'format' => strtolower((string) pathinfo($export->file_path, PATHINFO_EXTENSION)),
                 'parameters' => $export->parameters,
                 'used' => $export->used,
                 'expires_at' => $export->expires_at->toISOString(),
@@ -338,6 +351,90 @@ class ExportController extends BaseController
         });
         
         return $this->sendPaginated($data, 'Export history retrieved successfully');
+    }
+
+    private function detectContentType(string $extension): string
+    {
+        return match ($extension) {
+            'csv' => 'text/csv; charset=UTF-8',
+            'pdf' => 'application/pdf',
+            default => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        };
+    }
+
+    private function buildSimplePdfFromExport(object $export, string $title): string
+    {
+        if (!method_exists($export, 'query') || !method_exists($export, 'headings') || !method_exists($export, 'map')) {
+            throw new \RuntimeException('Export object cannot be converted to PDF');
+        }
+
+        $headings = (array) $export->headings();
+        $items = $export->query()->limit(80)->get();
+        $rows = [];
+        foreach ($items as $item) {
+            $rows[] = (array) $export->map($item);
+        }
+
+        $lines = [];
+        $lines[] = $title;
+        $lines[] = 'Generated at: ' . now()->toDateTimeString();
+        $lines[] = '';
+        $lines[] = implode(' | ', $headings);
+        $lines[] = str_repeat('-', 110);
+        foreach ($rows as $row) {
+            $line = implode(' | ', array_map(function ($value) {
+                $str = trim((string) $value);
+                return $str === '' ? '-' : $str;
+            }, $row));
+            $lines[] = substr($line, 0, 110);
+        }
+
+        if ($export->query()->count() > count($rows)) {
+            $lines[] = '';
+            $lines[] = '... output truncated. Please use XLSX/CSV for full data.';
+        }
+
+        return $this->renderSimplePdf($lines);
+    }
+
+    private function renderSimplePdf(array $lines): string
+    {
+        $lines = array_slice($lines, 0, 45);
+
+        $content = "BT\n/F1 10 Tf\n50 800 Td\n";
+        foreach ($lines as $index => $line) {
+            if ($index > 0) {
+                $content .= "0 -16 Td\n";
+            }
+            $safe = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], (string) $line);
+            $content .= "({$safe}) Tj\n";
+        }
+        $content .= "ET";
+
+        $objects = [];
+        $objects[] = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj";
+        $objects[] = "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj";
+        $objects[] = "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj";
+        $objects[] = "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj";
+        $objects[] = "5 0 obj\n<< /Length " . strlen($content) . " >>\nstream\n{$content}\nendstream\nendobj";
+
+        $pdf = "%PDF-1.4\n";
+        $offsets = [0];
+        foreach ($objects as $obj) {
+            $offsets[] = strlen($pdf);
+            $pdf .= $obj . "\n";
+        }
+
+        $xrefOffset = strlen($pdf);
+        $count = count($objects) + 1;
+        $pdf .= "xref\n0 {$count}\n";
+        $pdf .= "0000000000 65535 f \n";
+        for ($i = 1; $i < $count; $i++) {
+            $pdf .= sprintf("%010d 00000 n \n", $offsets[$i]);
+        }
+        $pdf .= "trailer\n<< /Size {$count} /Root 1 0 R >>\nstartxref\n{$xrefOffset}\n%%EOF";
+
+        return $pdf;
     }
 
     public function destroyHistory(Request $request, int $id)
