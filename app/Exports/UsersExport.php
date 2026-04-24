@@ -26,7 +26,8 @@ class UsersExport implements FromQuery, WithHeadings, WithMapping
 
     public function query()
     {
-        $query = User::with(['role'])->withTrashed();
+        // Keep export aligned with Users list: exclude soft-deleted accounts.
+        $query = User::with(['role']);
 
         if ($this->fromDate) {
             $query->where('created_at', '>=', Carbon::parse($this->fromDate));

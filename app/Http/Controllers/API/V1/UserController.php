@@ -456,6 +456,8 @@ class UserController extends BaseController
         $actingRoleName = $actingUser?->role?->name;
         $targetCurrentRoleName = $user->role?->name;
         $isSelfUpdate = (int) $actingUser?->id === (int) $user->id;
+        $actingRank = $this->roleRank($actingRoleName);
+        $targetCurrentRank = $this->roleRank($targetCurrentRoleName);
 
         if (
             !$actingIsSuperAdmin
@@ -469,9 +471,8 @@ class UserController extends BaseController
         }
 
         if (
-            !$actingIsSuperAdmin
-            && !$isSelfUpdate
-            && !$this->canManageRoleName($actingRoleName, $targetCurrentRoleName)
+            !$isSelfUpdate
+            && !($actingRank > 0 && $targetCurrentRank > 0 && $targetCurrentRank < $actingRank)
         ) {
             return $this->sendForbidden('Vous ne pouvez pas modifier cet utilisateur');
         }
@@ -714,7 +715,7 @@ class UserController extends BaseController
             return $this->sendForbidden('Impossible de supprimer le dernier super admin actif');
         }
 
-        if ($isLastActiveLeadershipInActor) {
+        if ($isLastActiveLeadershipInActor && !$actingIsSuperAdmin && $isSelfDelete) {
             $roleLabel = $this->actorRoleLabel($targetRoleName);
             return $this->sendForbidden("Impossible de supprimer le dernier {$roleLabel} actif de cet acteur");
         }

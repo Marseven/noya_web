@@ -28,7 +28,8 @@ class MerchantsExport implements FromQuery, WithHeadings, WithMapping
 
     public function query()
     {
-        $query = Merchant::with(['parent'])->withTrashed();
+        // Keep export aligned with Merchants list: exclude soft-deleted actors.
+        $query = Merchant::with(['parent']);
 
         if ($this->fromDate) {
             $query->where('created_at', '>=', Carbon::parse($this->fromDate));
