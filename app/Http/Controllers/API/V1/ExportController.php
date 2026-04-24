@@ -321,18 +321,39 @@ class ExportController extends BaseController
             ->paginate($perPage);
             
         $data = $exports->map(function ($export) {
+            $isDownloadAvailable = $export->isValid();
+
             return [
                 'id' => $export->id,
                 'export_type' => $export->export_type,
+                'file_name' => basename($export->file_path),
                 'parameters' => $export->parameters,
                 'used' => $export->used,
                 'expires_at' => $export->expires_at->toISOString(),
                 'used_at' => $export->used_at ? $export->used_at->toISOString() : null,
-                'created_at' => $export->created_at->toISOString()
+                'created_at' => $export->created_at->toISOString(),
+                'token' => $isDownloadAvailable ? $export->token : null,
+                'download_url' => $isDownloadAvailable ? url("/api/v1/exports/download/{$export->token}") : null
             ];
         });
         
         return $this->sendPaginated($data, 'Export history retrieved successfully');
+    }
+
+    public function destroyHistory(Request $request, int $id)
+    {
+        $user = auth()->user();
+
+        $export = ExportToken::where('user_id', $user->id)->find($id);
+        if (!$export) {
+            return $this->sendError('Export history entry not found', [], 404);
+        }
+
+        $export->delete();
+
+        return $this->sendResponse([
+            'id' => $id
+        ], 'Export history entry deleted successfully');
     }
 
     /**

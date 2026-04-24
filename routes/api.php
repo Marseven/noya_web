@@ -140,6 +140,7 @@ Route::prefix('v1')->middleware(['api.credentials'])->group(function () {
         // Export management
         Route::post('/exports/generate', [App\Http\Controllers\API\V1\ExportController::class, 'generate']);
         Route::get('/exports/history', [App\Http\Controllers\API\V1\ExportController::class, 'history']);
+        Route::delete('/exports/history/{id}', [App\Http\Controllers\API\V1\ExportController::class, 'destroyHistory']);
         
     });
 });
