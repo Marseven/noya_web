@@ -130,6 +130,7 @@ Route::prefix('v1')->middleware(['api.credentials'])->group(function () {
             ->middlewareFor('update', 'check.privilege:payments.update')
             ->middlewareFor('destroy', 'check.privilege:payments.delete');
         Route::post('payments/{payment}/confirm', [App\Http\Controllers\API\V1\PaymentController::class, 'confirmPayment'])->middleware('check.privilege:payments.manage');
+        Route::post('payments/{payment}/initiate-operator', [App\Http\Controllers\API\V1\PaymentController::class, 'initiateOperatorPayment'])->middleware('check.privilege:payments.manage');
         
         // File management
         Route::post('/files/upload', [App\Http\Controllers\API\V1\FileController::class, 'upload']);
@@ -147,3 +148,5 @@ Route::prefix('v1')->middleware(['api.credentials'])->group(function () {
 
 // Export download route (unprotected, uses token authentication)
 Route::get('/v1/exports/download/{token}', [App\Http\Controllers\API\V1\ExportController::class, 'download']);
+Route::post('/v1/payments/webhooks/{operator}', [App\Http\Controllers\API\V1\PaymentController::class, 'webhookOperatorPayment'])
+    ->middleware('throttle:60,1');

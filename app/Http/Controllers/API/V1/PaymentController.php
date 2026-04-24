@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Support\AuditLogger;
 use App\Support\NotificationPublisher;
+use App\Support\Payments\OperatorGateway;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 
@@ -420,11 +421,125 @@ class PaymentController extends BaseController
             $payment->callback_data = array_merge($payment->callback_data ?? [], $request->callback_data);
         }
 
+        $this->finalizePaidTransition($payment, (int) $request->user()->id, 'Status updated by payment confirmation');
+
+        AuditLogger::log($request, 'payment.confirmed', $payment, [
+            'order_id' => $payment->order_id,
+            'status' => $payment->status,
+            'amount' => $payment->amount,
+        ]);
+
+        return $this->sendResponse(new PaymentResource($payment->load('order')), 'Payment confirmed successfully');
+    }
+
+    public function initiateOperatorPayment(Request $request, $paymentId, OperatorGateway $gateway)
+    {
+        $payment = Payment::with('order')->find($paymentId);
+        if (!$payment) {
+            return $this->sendNotFound('Payment not found');
+        }
+
+        if ($payment->order && !$this->hasMerchantScopeAccess($request, (int) $payment->order->merchant_id)) {
+            return $this->sendForbidden('You are not allowed to initiate this payment');
+        }
+
+        if ($payment->status === 'PAID') {
+            return $this->sendError('Payment is already confirmed', [], 400);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'operator' => 'required|string|in:airtel_money,moov_money,visa_mastercard',
+            'phone_number' => 'sometimes|nullable|string|max:32',
+            'callback_url' => 'sometimes|nullable|url|max:255',
+        ]);
+        if ($validator->fails()) {
+            return $this->sendValidationError($validator->errors()->toArray());
+        }
+
+        $operator = (string) $request->input('operator');
+        $result = $gateway->initiate($payment, $operator, $request->only(['phone_number', 'callback_url']));
+
+        if (!($result['ok'] ?? false)) {
+            return $this->sendError((string) ($result['message'] ?? 'Operator initiation failed'), [
+                'operator' => [$result['raw'] ?? null],
+            ], 422);
+        }
+
+        $payment->partner_name = $operator;
+        if (!empty($result['external_reference'])) {
+            $payment->partner_reference = (string) $result['external_reference'];
+        }
+        $payment->callback_data = array_merge($payment->callback_data ?? [], [
+            'operator_init' => $result['raw'] ?? [],
+            'operator_redirect_url' => $result['redirect_url'] ?? null,
+            'operator_initiated_at' => now()->toISOString(),
+        ]);
+        $payment->save();
+
+        AuditLogger::log($request, 'payment.operator.initiated', $payment, [
+            'operator' => $operator,
+            'reference' => $payment->partner_reference,
+        ]);
+
+        return $this->sendResponse([
+            'payment_id' => (int) $payment->id,
+            'operator' => $operator,
+            'partner_reference' => $payment->partner_reference,
+            'redirect_url' => $result['redirect_url'] ?? null,
+        ], 'Operator payment initiated successfully');
+    }
+
+    public function webhookOperatorPayment(Request $request, string $operator, OperatorGateway $gateway)
+    {
+        if (!$gateway->isSupported($operator)) {
+            return $this->sendError('Unsupported payment operator', [], 404);
+        }
+
+        if (!$gateway->verifyWebhookSignature($request, $operator)) {
+            return $this->sendError('Invalid webhook signature', [], 401);
+        }
+
+        $payload = (array) $request->all();
+        $reference = $gateway->extractReference($payload);
+        if (!$reference) {
+            return $this->sendValidationError([
+                'reference' => ['Missing operator payment reference'],
+            ]);
+        }
+
+        $payment = Payment::with('order')
+            ->where('partner_reference', $reference)
+            ->first();
+
+        if (!$payment) {
+            return $this->sendNotFound('Payment not found for provided reference');
+        }
+
+        $normalizedStatus = $gateway->normalizeWebhookStatus($payload);
+        $payment->partner_name = $operator;
+        $payment->callback_data = array_merge($payment->callback_data ?? [], [
+            'operator_webhook' => $payload,
+            'operator_webhook_received_at' => now()->toISOString(),
+        ]);
+        $payment->save();
+
+        if ($normalizedStatus === 'PAID' && $payment->status !== 'PAID') {
+            $systemUserId = null;
+            $this->finalizePaidTransition($payment, $systemUserId, 'Status updated by operator webhook');
+        }
+
+        return $this->sendResponse([
+            'payment_id' => (int) $payment->id,
+            'status' => $payment->status,
+            'operator' => $operator,
+        ], 'Webhook processed successfully');
+    }
+
+    private function finalizePaidTransition(Payment $payment, ?int $changedByUserId, string $note): void
+    {
         $oldOrderStatus = $payment->order?->status;
 
-        // Mark payment as paid (this will also update order status)
         $payment->markAsPaid();
-
         $payment->refresh();
         $payment->load('order');
 
@@ -432,10 +547,10 @@ class PaymentController extends BaseController
             DeliveryHistory::create([
                 'order_id' => (int) $payment->order->id,
                 'merchant_id' => (int) ($payment->order->destination_merchant_id ?? $payment->order->merchant_id ?? 0) ?: null,
-                'changed_by' => (int) $request->user()->id,
+                'changed_by' => $changedByUserId,
                 'from_status' => $oldOrderStatus,
                 'to_status' => (string) $payment->order->status,
-                'note' => 'Status updated by payment confirmation',
+                'note' => $note,
                 'changed_at' => now(),
             ]);
         }
@@ -453,13 +568,5 @@ class PaymentController extends BaseController
                 (int) $payment->id
             );
         }
-
-        AuditLogger::log($request, 'payment.confirmed', $payment, [
-            'order_id' => $payment->order_id,
-            'status' => $payment->status,
-            'amount' => $payment->amount,
-        ]);
-
-        return $this->sendResponse(new PaymentResource($payment->load('order')), 'Payment confirmed successfully');
     }
 }

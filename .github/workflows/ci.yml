@@ -42,3 +42,22 @@ jobs:
           DB_CONNECTION: sqlite
           DB_DATABASE: database/database.sqlite
         run: php artisan test
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.HOSTINGER_HOST != '' && secrets.HOSTINGER_USER != '' && secrets.HOSTINGER_PASSWORD != ''
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy Backend on Hostinger
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOSTINGER_HOST }}
+          username: ${{ secrets.HOSTINGER_USER }}
+          password: ${{ secrets.HOSTINGER_PASSWORD }}
+          port: ${{ secrets.HOSTINGER_PORT || 22 }}
+          script: |
+            cd /home/${{ secrets.HOSTINGER_USER }}/domains/mebodorichard.com/public_html/noya
+            git fetch origin main
+            git merge --no-edit FETCH_HEAD
+            php artisan migrate --force
