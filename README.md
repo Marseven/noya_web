@@ -52,10 +52,6 @@ The application includes the following main entities:
    DB_CONNECTION=sqlite
    # Or use MySQL/PostgreSQL
    
-   # API Credentials
-   API_KEY=noya_web_api_key_2024
-   API_SECRET=noya_web_api_secret_2024_secure
-   
    # Sanctum Configuration
    SANCTUM_STATEFUL_DOMAINS=localhost,127.0.0.1
    SANCTUM_GUARD=web
@@ -83,14 +79,6 @@ Access the interactive API documentation at: `http://localhost:8000/api/document
 
 ## Authentication
 
-### API Credentials
-All API requests require the following headers:
-```
-X-App-Key: noya_web_api_key_2024
-X-App-Secret: noya_web_api_secret_2024_secure
-```
-
-### User Authentication
 Protected endpoints require a Bearer token:
 ```
 Authorization: Bearer {token}

@@ -41,8 +41,6 @@ class FileUploadTest extends TestCase
         $this->token = $this->superAdmin->createToken('Test Token')->plainTextToken;
         $this->headers = [
             'Authorization' => 'Bearer ' . $this->token,
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret'),
             'Accept' => 'application/json'
         ];
 
@@ -284,31 +282,31 @@ class FileUploadTest extends TestCase
     {
         $file = UploadedFile::fake()->image('test.jpg', 100, 100);
 
-        $headers = [
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret')
-        ];
-
         $response = $this->postJson('/api/v1/files/upload', [
             'file' => $file
-        ], $headers);
+        ]);
 
         $response->assertStatus(401);
     }
 
-    public function test_file_upload_requires_api_credentials()
+    public function test_file_upload_with_authentication_does_not_require_legacy_api_headers()
     {
         $file = UploadedFile::fake()->image('test.jpg', 100, 100);
 
         $headers = [
-            'Authorization' => 'Bearer ' . $this->token
+            'Authorization' => 'Bearer ' . $this->token,
+            'Accept' => 'application/json',
         ];
 
         $response = $this->postJson('/api/v1/files/upload', [
             'file' => $file
         ], $headers);
 
-        $response->assertStatus(401);
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'File uploaded successfully',
+            ]);
     }
 
     protected function tearDown(): void

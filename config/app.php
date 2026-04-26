@@ -56,18 +56,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | API Credentials
-    |--------------------------------------------------------------------------
-    |
-    | These values are used for API authentication via app key and secret.
-    |
-    */
-
-    'api_key' => env('API_KEY', 'noya_web_api_key_2024'),
-    'api_secret' => env('API_SECRET', 'noya_web_api_secret_2024_secure'),
-
-    /*
-    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

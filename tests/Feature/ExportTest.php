@@ -59,16 +59,12 @@ class ExportTest extends TestCase
         
         $this->adminHeaders = [
             'Authorization' => 'Bearer ' . $this->adminToken,
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret'),
             'Accept' => 'application/json',
             'Content-Type' => 'application/json'
         ];
 
         $this->userHeaders = [
             'Authorization' => 'Bearer ' . $this->userToken,
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret'),
             'Accept' => 'application/json',
             'Content-Type' => 'application/json'
         ];
@@ -399,29 +395,30 @@ class ExportTest extends TestCase
 
     public function test_export_requires_authentication()
     {
-        $headers = [
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret')
-        ];
-
         $response = $this->postJson('/api/v1/exports/generate', [
             'type' => 'users'
-        ], $headers);
+        ]);
 
         $response->assertStatus(401);
     }
 
-    public function test_export_requires_api_credentials()
+    public function test_export_with_authentication_does_not_require_legacy_api_headers()
     {
         $headers = [
-            'Authorization' => 'Bearer ' . $this->adminToken
+            'Authorization' => 'Bearer ' . $this->adminToken,
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
         ];
 
         $response = $this->postJson('/api/v1/exports/generate', [
             'type' => 'users'
         ], $headers);
 
-        $response->assertStatus(401);
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Export generated successfully',
+            ]);
     }
 
     protected function tearDown(): void

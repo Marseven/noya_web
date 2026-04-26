@@ -21,8 +21,8 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 // File serving route (unprotected)
 Route::get('/files/{path}', [App\Http\Controllers\API\V1\FileController::class, 'serve'])->where('path', '.*');
 
-// API V1 Routes with app credentials validation
-Route::prefix('v1')->middleware(['api.credentials'])->group(function () {
+// API V1 Routes
+Route::prefix('v1')->group(function () {
     
     // Public routes (no authentication required)
     Route::get('/health', function () {

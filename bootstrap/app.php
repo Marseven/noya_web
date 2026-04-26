@@ -13,7 +13,6 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'api.credentials' => \App\Http\Middleware\ValidateApiCredentials::class,
             'check.privilege' => \App\Http\Middleware\CheckPrivileges::class,
         ]);
     })

@@ -50,8 +50,6 @@ class ComprehensiveApiTest extends TestCase
         $this->token = $this->superAdmin->createToken('Test Token')->plainTextToken;
         $this->headers = [
             'Authorization' => 'Bearer ' . $this->token,
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret'),
             'Accept' => 'application/json',
             'Content-Type' => 'application/json'
         ];
@@ -305,26 +303,18 @@ class ComprehensiveApiTest extends TestCase
         $this->assertTrue(true, 'User management flow test passed');
     }
 
-    public function test_api_requires_credentials()
+    public function test_api_requires_authentication()
     {
-        // Test without any headers
+        // No auth token should be rejected
         $response = $this->getJson('/api/v1/users');
         $response->assertStatus(401);
 
-        // Test with invalid API credentials
+        // Legacy API headers must not bypass auth requirement
         $invalidHeaders = [
             'X-App-Key' => 'invalid_key',
             'X-App-Secret' => 'invalid_secret'
         ];
         $response = $this->getJson('/api/v1/users', $invalidHeaders);
-        $response->assertStatus(401);
-
-        // Test with valid API credentials but no auth token
-        $apiHeaders = [
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret')
-        ];
-        $response = $this->getJson('/api/v1/users', $apiHeaders);
         $response->assertStatus(401);
     }
 
@@ -344,8 +334,8 @@ class ComprehensiveApiTest extends TestCase
         $limitedToken = $limitedUser->createToken('Limited Token')->plainTextToken;
         $limitedHeaders = [
             'Authorization' => 'Bearer ' . $limitedToken,
-            'X-App-Key' => config('app.api_key'),
-            'X-App-Secret' => config('app.api_secret')
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
         ];
 
         // User should NOT be able to create articles (no privileges)

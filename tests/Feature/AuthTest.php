@@ -244,7 +244,7 @@ class AuthTest extends TestCase
                 ]);
     }
 
-    public function test_api_requires_credentials()
+    public function test_login_endpoint_is_accessible_without_api_headers()
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'test@example.com',
@@ -254,11 +254,11 @@ class AuthTest extends TestCase
         $response->assertStatus(401)
                 ->assertJson([
                     'success' => false,
-                    'message' => 'API credentials are required'
+                    'message' => 'Invalid credentials'
                 ]);
     }
 
-    public function test_api_rejects_invalid_credentials()
+    public function test_invalid_api_headers_do_not_bypass_login_validation()
     {
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'test@example.com',
@@ -271,7 +271,7 @@ class AuthTest extends TestCase
         $response->assertStatus(401)
                 ->assertJson([
                     'success' => false,
-                    'message' => 'Invalid API credentials'
+                    'message' => 'Invalid credentials'
                 ]);
     }
 }
