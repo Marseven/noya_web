@@ -152,7 +152,7 @@ class UserController extends BaseController
      *      tags={"Users"},
      *      summary="Get list of users",
      *      description="Returns list of users with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -231,7 +231,7 @@ class UserController extends BaseController
      *      tags={"Users"},
      *      summary="Create new user",
      *      description="Create a new user",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -362,7 +362,7 @@ class UserController extends BaseController
      *      tags={"Users"},
      *      summary="Get user information",
      *      description="Returns user data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="User id",
@@ -414,7 +414,7 @@ class UserController extends BaseController
      *      tags={"Users"},
      *      summary="Update existing user",
      *      description="Update user data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="User id",
@@ -670,7 +670,7 @@ class UserController extends BaseController
      *      tags={"Users"},
      *      summary="Delete user",
      *      description="Soft delete user",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="User id",

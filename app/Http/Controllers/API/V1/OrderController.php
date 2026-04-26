@@ -23,7 +23,7 @@ class OrderController extends BaseController
      *      tags={"Orders"},
      *      summary="Get list of orders",
      *      description="Returns list of orders with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -122,7 +122,7 @@ class OrderController extends BaseController
      *      tags={"Orders"},
      *      summary="Create new order",
      *      description="Create a new order",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -227,7 +227,7 @@ class OrderController extends BaseController
      *      tags={"Orders"},
      *      summary="Get order information",
      *      description="Returns order data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Order id",
@@ -281,7 +281,7 @@ class OrderController extends BaseController
      *      tags={"Orders"},
      *      summary="Update existing order",
      *      description="Update order data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Order id",
@@ -390,7 +390,7 @@ class OrderController extends BaseController
      *      tags={"Orders"},
      *      summary="Delete order",
      *      description="Soft delete order",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Order id",
@@ -438,7 +438,7 @@ class OrderController extends BaseController
      *      tags={"Orders"},
      *      summary="Calculate order amount",
      *      description="Calculate total amount based on cart items",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="order",
      *          description="Order id",

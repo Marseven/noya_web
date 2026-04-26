@@ -16,7 +16,7 @@ class PrivilegeController extends BaseController
      *      tags={"Privileges"},
      *      summary="Get list of privileges",
      *      description="Returns list of privileges with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -73,7 +73,7 @@ class PrivilegeController extends BaseController
      *      tags={"Privileges"},
      *      summary="Create new privilege",
      *      description="Create a new privilege",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -122,7 +122,7 @@ class PrivilegeController extends BaseController
      *      tags={"Privileges"},
      *      summary="Get privilege information",
      *      description="Returns privilege data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Privilege id",
@@ -163,7 +163,7 @@ class PrivilegeController extends BaseController
      *      tags={"Privileges"},
      *      summary="Update existing privilege",
      *      description="Update privilege data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Privilege id",
@@ -220,7 +220,7 @@ class PrivilegeController extends BaseController
      *      tags={"Privileges"},
      *      summary="Delete privilege",
      *      description="Soft delete privilege",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Privilege id",

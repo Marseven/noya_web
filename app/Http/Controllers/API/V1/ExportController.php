@@ -22,7 +22,7 @@ class ExportController extends BaseController
      *      tags={"Exports"},
      *      summary="Generate export file and get download link",
      *      description="Generate an Excel export for specified data type with filters and return a one-time download link",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -278,7 +278,7 @@ class ExportController extends BaseController
      *      tags={"Exports"},
      *      summary="Get user's export history",
      *      description="Get the authenticated user's export history with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="per_page",
      *          description="Number of items per page (default: 15)",

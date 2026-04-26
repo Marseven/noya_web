@@ -24,7 +24,6 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="User login",
      *      description="Login user with email and password",
-     *      security={{"apiCredentials": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -132,7 +131,6 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="User registration",
      *      description="Register a new user",
-     *      security={{"apiCredentials": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -229,7 +227,6 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="Setup 2FA",
      *      description="Generate QR code and recovery codes for 2FA setup",
-     *      security={{"apiCredentials": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -301,7 +298,6 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="Confirm 2FA setup",
      *      description="Confirm 2FA setup with OTP verification",
-     *      security={{"apiCredentials": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -485,7 +481,7 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="User logout",
      *      description="Logout user and revoke token",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Response(
      *          response=200,
      *          description="Logout successful",
@@ -509,7 +505,7 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="Get user profile",
      *      description="Get authenticated user profile",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Response(
      *          response=200,
      *          description="User profile",
@@ -534,7 +530,7 @@ class AuthController extends BaseController
      *      tags={"Authentication"},
      *      summary="Update user profile",
      *      description="Update authenticated user profile",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(

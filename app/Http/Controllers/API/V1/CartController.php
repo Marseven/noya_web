@@ -20,7 +20,7 @@ class CartController extends BaseController
      *      tags={"Carts"},
      *      summary="Get list of carts",
      *      description="Returns list of carts with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -99,7 +99,7 @@ class CartController extends BaseController
      *      tags={"Carts"},
      *      summary="Create new cart item",
      *      description="Create a new cart item",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -176,7 +176,7 @@ class CartController extends BaseController
      *      tags={"Carts"},
      *      summary="Get cart information",
      *      description="Returns cart data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Cart id",
@@ -221,7 +221,7 @@ class CartController extends BaseController
      *      tags={"Carts"},
      *      summary="Update existing cart item",
      *      description="Update cart item data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Cart id",
@@ -295,7 +295,7 @@ class CartController extends BaseController
      *      tags={"Carts"},
      *      summary="Delete cart item",
      *      description="Soft delete cart item",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Cart id",

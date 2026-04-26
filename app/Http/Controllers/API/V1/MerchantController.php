@@ -22,7 +22,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Get list of merchants",
      *      description="Returns list of merchants with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -102,7 +102,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Create new merchant",
      *      description="Create a new merchant",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -219,7 +219,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Get merchant information",
      *      description="Returns merchant data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Merchant id",
@@ -264,7 +264,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Update existing merchant",
      *      description="Update merchant data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Merchant id",
@@ -377,7 +377,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Delete merchant",
      *      description="Soft delete merchant",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Merchant id",
@@ -430,7 +430,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Attach users to merchant",
      *      description="Attach one or more users to a merchant",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="merchant",
      *          description="Merchant id",
@@ -509,7 +509,7 @@ class MerchantController extends BaseController
      *      tags={"Merchants"},
      *      summary="Detach users from merchant",
      *      description="Detach one or more users from a merchant",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="merchant",
      *          description="Merchant id",

@@ -20,7 +20,7 @@ class ArticleController extends BaseController
      *      tags={"Articles"},
      *      summary="Get list of articles",
      *      description="Returns list of articles with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -100,7 +100,7 @@ class ArticleController extends BaseController
      *      tags={"Articles"},
      *      summary="Create new article",
      *      description="Create a new article",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -193,7 +193,7 @@ class ArticleController extends BaseController
      *      tags={"Articles"},
      *      summary="Get article information",
      *      description="Returns article data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Article id",
@@ -238,7 +238,7 @@ class ArticleController extends BaseController
      *      tags={"Articles"},
      *      summary="Update existing article",
      *      description="Update article data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Article id",
@@ -337,7 +337,7 @@ class ArticleController extends BaseController
      *      tags={"Articles"},
      *      summary="Delete article",
      *      description="Soft delete article",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Article id",

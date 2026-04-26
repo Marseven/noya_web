@@ -22,7 +22,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Get list of stocks",
      *      description="Returns list of stocks with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -103,7 +103,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Create new stock",
      *      description="Create a new stock entry",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -174,7 +174,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Get stock information",
      *      description="Returns stock data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Stock id",
@@ -219,7 +219,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Update existing stock",
      *      description="Update stock data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Stock id",
@@ -285,7 +285,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Delete stock",
      *      description="Soft delete stock",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Stock id",
@@ -332,7 +332,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Add stock quantity",
      *      description="Add quantity to existing stock with history tracking",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="stock",
      *          description="Stock id",
@@ -399,7 +399,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Withdraw stock quantity",
      *      description="Withdraw quantity from existing stock with history tracking",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="stock",
      *          description="Stock id",
@@ -467,7 +467,7 @@ class StockController extends BaseController
      *      tags={"Stocks"},
      *      summary="Get stock history",
      *      description="Get history of stock movements",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="stock",
      *          description="Stock id",

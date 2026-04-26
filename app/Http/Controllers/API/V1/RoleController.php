@@ -25,7 +25,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Get list of roles",
      *      description="Returns list of roles with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -86,7 +86,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Create new role",
      *      description="Create a new role",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -142,7 +142,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Get role information",
      *      description="Returns role data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Role id",
@@ -190,7 +190,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Update existing role",
      *      description="Update role data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Role id",
@@ -261,7 +261,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Delete role",
      *      description="Soft delete role",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Role id",
@@ -304,7 +304,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Attach privileges to role",
      *      description="Attach one or more privileges to a role",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="role",
      *          description="Role id",
@@ -366,7 +366,7 @@ class RoleController extends BaseController
      *      tags={"Roles"},
      *      summary="Detach privileges from role",
      *      description="Detach one or more privileges from a role",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="role",
      *          description="Role id",

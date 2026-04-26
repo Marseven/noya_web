@@ -24,7 +24,7 @@ class PaymentController extends BaseController
      *      tags={"Payments"},
      *      summary="Get list of payments",
      *      description="Returns list of payments with pagination",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="page",
      *          description="Page number",
@@ -103,7 +103,7 @@ class PaymentController extends BaseController
      *      tags={"Payments"},
      *      summary="Create new payment",
      *      description="Create a new payment",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\JsonContent(
@@ -181,7 +181,7 @@ class PaymentController extends BaseController
      *      tags={"Payments"},
      *      summary="Get payment information",
      *      description="Returns payment data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Payment id",
@@ -226,7 +226,7 @@ class PaymentController extends BaseController
      *      tags={"Payments"},
      *      summary="Update existing payment",
      *      description="Update payment data",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Payment id",
@@ -313,7 +313,7 @@ class PaymentController extends BaseController
      *      tags={"Payments"},
      *      summary="Delete payment",
      *      description="Soft delete payment",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="id",
      *          description="Payment id",
@@ -361,7 +361,7 @@ class PaymentController extends BaseController
      *      tags={"Payments"},
      *      summary="Confirm payment",
      *      description="Mark payment as paid and update order status",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\Parameter(
      *          name="payment",
      *          description="Payment id",

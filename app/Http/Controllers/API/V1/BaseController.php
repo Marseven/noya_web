@@ -33,14 +33,6 @@ use Illuminate\Http\Resources\Json\ResourceCollection;
  *      bearerFormat="JWT",
  *      description="Enter token in format (Bearer <token>)"
  * )
- * 
- * @OA\SecurityScheme(
- *      securityScheme="apiCredentials",
- *      type="apiKey",
- *      in="header",
- *      name="X-App-Key",
- *      description="API Key for application authentication"
- * )
  */
 class BaseController extends Controller
 {

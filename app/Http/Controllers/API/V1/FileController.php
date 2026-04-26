@@ -15,7 +15,7 @@ class FileController extends BaseController
      *      tags={"Files"},
      *      summary="Upload file to temporary storage",
      *      description="Upload a file to temporary storage and get a temporary URL",
-     *      security={{"bearerAuth": {}}, {"apiCredentials": {}}},
+     *      security={{"bearerAuth": {}}},
      *      @OA\RequestBody(
      *          required=true,
      *          @OA\MediaType(
