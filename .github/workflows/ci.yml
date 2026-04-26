@@ -1,13 +1,15 @@
-name: Backend CI
+name: NOYA Global CI/CD
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  test:
+  test-backend:
+    name: Backend Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -43,21 +45,152 @@ jobs:
           DB_DATABASE: database/database.sqlite
         run: php artisan test
 
-  deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.HOSTINGER_HOST != '' && secrets.HOSTINGER_USER != '' && secrets.HOSTINGER_PASSWORD != ''
-    needs: test
+  deploy-all:
+    name: Sync Repos + Deploy Hostinger
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: test-backend
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy Backend on Hostinger
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout backend repository
+        uses: actions/checkout@v4
         with:
-          host: ${{ secrets.HOSTINGER_HOST }}
-          username: ${{ secrets.HOSTINGER_USER }}
-          password: ${{ secrets.HOSTINGER_PASSWORD }}
-          port: ${{ secrets.HOSTINGER_PORT || 22 }}
-          script: |
-            cd /home/${{ secrets.HOSTINGER_USER }}/domains/mebodorichard.com/public_html/noya
-            git fetch origin main
-            git merge --no-edit FETCH_HEAD
-            php artisan migrate --force
+          fetch-depth: 0
+
+      - name: Validate required secrets
+        env:
+          BITBUCKET_USERNAME: ${{ secrets.BITBUCKET_USERNAME }}
+          BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
+          BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
+          BITBUCKET_BACKEND_REPO: ${{ secrets.BITBUCKET_BACKEND_REPO }}
+          GITHUB_BACKEND_REPO: ${{ secrets.GITHUB_BACKEND_REPO }}
+          GITHUB_BACKEND_PAT: ${{ secrets.GITHUB_BACKEND_PAT }}
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USER: ${{ secrets.HOSTINGER_USER }}
+          HOSTINGER_PASSWORD: ${{ secrets.HOSTINGER_PASSWORD }}
+          HOSTINGER_FRONT_DIR: ${{ secrets.HOSTINGER_FRONT_DIR }}
+          HOSTINGER_BACK_DIR: ${{ secrets.HOSTINGER_BACK_DIR }}
+        run: |
+          set -euo pipefail
+          required=(
+            BITBUCKET_USERNAME
+            BITBUCKET_APP_PASSWORD
+            BITBUCKET_FRONTEND_REPO
+            BITBUCKET_BACKEND_REPO
+            GITHUB_BACKEND_REPO
+            GITHUB_BACKEND_PAT
+            HOSTINGER_HOST
+            HOSTINGER_PORT
+            HOSTINGER_USER
+            HOSTINGER_PASSWORD
+            HOSTINGER_FRONT_DIR
+            HOSTINGER_BACK_DIR
+          )
+          for key in "${required[@]}"; do
+            if [ -z "${!key:-}" ]; then
+              echo "::error::Missing required secret: $key"
+              exit 1
+            fi
+          done
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deployment tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync sshpass
+
+      - name: Push backend to Bitbucket
+        env:
+          BITBUCKET_USERNAME: ${{ secrets.BITBUCKET_USERNAME }}
+          BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
+          BITBUCKET_BACKEND_REPO: ${{ secrets.BITBUCKET_BACKEND_REPO }}
+        run: |
+          set -euo pipefail
+          git remote add bitbucket "https://${BITBUCKET_USERNAME}:${BITBUCKET_APP_PASSWORD}@bitbucket.org/${BITBUCKET_BACKEND_REPO}.git"
+          git push bitbucket HEAD:main
+
+      - name: Push backend to GitHub (mirror)
+        env:
+          GITHUB_BACKEND_REPO: ${{ secrets.GITHUB_BACKEND_REPO }}
+          GITHUB_BACKEND_PAT: ${{ secrets.GITHUB_BACKEND_PAT }}
+        run: |
+          set -euo pipefail
+          git remote add github-mirror "https://x-access-token:${GITHUB_BACKEND_PAT}@github.com/${GITHUB_BACKEND_REPO}.git"
+          git push github-mirror HEAD:main
+
+      - name: Clone frontend repository from Bitbucket
+        env:
+          BITBUCKET_USERNAME: ${{ secrets.BITBUCKET_USERNAME }}
+          BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
+          BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main "https://${BITBUCKET_USERNAME}:${BITBUCKET_APP_PASSWORD}@bitbucket.org/${BITBUCKET_FRONTEND_REPO}.git" frontend-src
+
+      - name: Build frontend
+        working-directory: frontend-src
+        run: |
+          npm ci
+          npm run build
+
+      - name: Push frontend to Bitbucket
+        working-directory: frontend-src
+        run: git push origin main
+
+      - name: Sync frontend to Hostinger
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USER: ${{ secrets.HOSTINGER_USER }}
+          HOSTINGER_PASSWORD: ${{ secrets.HOSTINGER_PASSWORD }}
+          HOSTINGER_FRONT_DIR: ${{ secrets.HOSTINGER_FRONT_DIR }}
+        run: |
+          set -euo pipefail
+          sshpass -p "$HOSTINGER_PASSWORD" rsync -az \
+            -e "ssh -p $HOSTINGER_PORT -o StrictHostKeyChecking=accept-new" \
+            --exclude '.git/' \
+            --exclude 'node_modules/' \
+            --exclude '.env.local' \
+            --exclude '.DS_Store' \
+            frontend-src/ \
+            "$HOSTINGER_USER@$HOSTINGER_HOST:$HOSTINGER_FRONT_DIR/"
+
+      - name: Sync backend to Hostinger
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USER: ${{ secrets.HOSTINGER_USER }}
+          HOSTINGER_PASSWORD: ${{ secrets.HOSTINGER_PASSWORD }}
+          HOSTINGER_BACK_DIR: ${{ secrets.HOSTINGER_BACK_DIR }}
+        run: |
+          set -euo pipefail
+          sshpass -p "$HOSTINGER_PASSWORD" rsync -az \
+            -e "ssh -p $HOSTINGER_PORT -o StrictHostKeyChecking=accept-new" \
+            --exclude '.git/' \
+            --exclude '.env' \
+            --exclude 'vendor/' \
+            --exclude 'node_modules/' \
+            --exclude 'storage/logs/' \
+            --exclude '.DS_Store' \
+            ./ \
+            "$HOSTINGER_USER@$HOSTINGER_HOST:$HOSTINGER_BACK_DIR/"
+
+      - name: Run backend post-deploy tasks on Hostinger
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USER: ${{ secrets.HOSTINGER_USER }}
+          HOSTINGER_PASSWORD: ${{ secrets.HOSTINGER_PASSWORD }}
+          HOSTINGER_BACK_DIR: ${{ secrets.HOSTINGER_BACK_DIR }}
+        run: |
+          set -euo pipefail
+          sshpass -p "$HOSTINGER_PASSWORD" ssh \
+            -p "$HOSTINGER_PORT" \
+            -o StrictHostKeyChecking=accept-new \
+            "$HOSTINGER_USER@$HOSTINGER_HOST" \
+            "set -e; cd '$HOSTINGER_BACK_DIR'; php artisan migrate --force; php artisan optimize:clear; php artisan optimize"
