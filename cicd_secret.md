@@ -27,6 +27,7 @@ Bitbucket token note:
   Backend repo path in `owner/repo` format (example: `Marseven/noya_web`).
 - `GH_BACKEND_PAT`  
   GitHub PAT allowed to push on the backend repository (`repo` scope or fine-grained write access on contents).
+  Optional when `GH_BACKEND_REPO` is the same as the current workflow repository (mirror step is skipped).
 
 GitHub Actions limitation:
 
@@ -56,7 +57,7 @@ GitHub Actions limitation:
 - `BITBUCKET_FRONTEND_REPO`
 - `BITBUCKET_BACKEND_REPO`
 - `GH_BACKEND_REPO`
-- `GH_BACKEND_PAT`
+- `GH_BACKEND_PAT` (optional if `GH_BACKEND_REPO` equals current repo)
 - `HOSTINGER_HOST`
 - `HOSTINGER_PORT`
 - `HOSTINGER_USER`
