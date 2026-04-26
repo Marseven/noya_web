@@ -60,7 +60,8 @@ jobs:
       - name: Validate required secrets
         env:
           BITBUCKET_USERNAME: ${{ secrets.BITBUCKET_USERNAME }}
-          BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
+          BITBUCKET_BACKEND_TOKEN: ${{ secrets.BITBUCKET_BACKEND_TOKEN }}
+          BITBUCKET_FRONTEND_TOKEN: ${{ secrets.BITBUCKET_FRONTEND_TOKEN }}
           BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
           BITBUCKET_BACKEND_REPO: ${{ secrets.BITBUCKET_BACKEND_REPO }}
           GH_BACKEND_REPO: ${{ secrets.GH_BACKEND_REPO }}
@@ -76,7 +77,8 @@ jobs:
         run: |
           set -euo pipefail
           required=(
-            BITBUCKET_APP_PASSWORD
+            BITBUCKET_BACKEND_TOKEN
+            BITBUCKET_FRONTEND_TOKEN
             BITBUCKET_FRONTEND_REPO
             BITBUCKET_BACKEND_REPO
             GH_BACKEND_REPO
@@ -107,11 +109,11 @@ jobs:
 
       - name: Push backend to Bitbucket
         env:
-          BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
+          BITBUCKET_BACKEND_TOKEN: ${{ secrets.BITBUCKET_BACKEND_TOKEN }}
           BITBUCKET_BACKEND_REPO: ${{ secrets.BITBUCKET_BACKEND_REPO }}
         run: |
           set -euo pipefail
-          git remote add bitbucket "https://x-token-auth:${BITBUCKET_APP_PASSWORD}@bitbucket.org/${BITBUCKET_BACKEND_REPO}.git"
+          git remote add bitbucket "https://x-token-auth:${BITBUCKET_BACKEND_TOKEN}@bitbucket.org/${BITBUCKET_BACKEND_REPO}.git"
           git push bitbucket HEAD:main
 
       - name: Push backend to GitHub (mirror)
@@ -125,11 +127,11 @@ jobs:
 
       - name: Clone frontend repository from Bitbucket
         env:
-          BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
+          BITBUCKET_FRONTEND_TOKEN: ${{ secrets.BITBUCKET_FRONTEND_TOKEN }}
           BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch main "https://x-token-auth:${BITBUCKET_APP_PASSWORD}@bitbucket.org/${BITBUCKET_FRONTEND_REPO}.git" frontend-src
+          git clone --depth 1 --branch main "https://x-token-auth:${BITBUCKET_FRONTEND_TOKEN}@bitbucket.org/${BITBUCKET_FRONTEND_REPO}.git" frontend-src
 
       - name: Build frontend
         working-directory: frontend-src
@@ -138,8 +140,13 @@ jobs:
           npm run build
 
       - name: Push frontend to Bitbucket
+        env:
+          BITBUCKET_FRONTEND_TOKEN: ${{ secrets.BITBUCKET_FRONTEND_TOKEN }}
+          BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
         working-directory: frontend-src
-        run: git push origin main
+        run: |
+          git remote set-url origin "https://x-token-auth:${BITBUCKET_FRONTEND_TOKEN}@bitbucket.org/${BITBUCKET_FRONTEND_REPO}.git"
+          git push origin main
 
       - name: Sync frontend to Hostinger
         env:

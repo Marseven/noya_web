@@ -6,8 +6,10 @@ Create these repository secrets in GitHub (`Settings` -> `Secrets and variables`
 
 - `BITBUCKET_USERNAME`  
   Optional legacy username (example: `digitechafrica`), not used when `x-token-auth` is enabled.
-- `BITBUCKET_APP_PASSWORD`  
-  Bitbucket token used with `x-token-auth` in Git remote URLs.
+- `BITBUCKET_BACKEND_TOKEN`  
+  Bitbucket token for backend repository push (`noya_web`), used with `x-token-auth`.
+- `BITBUCKET_FRONTEND_TOKEN`  
+  Bitbucket token for frontend repository clone/push (`noya_frontend`), used with `x-token-auth`.
 - `BITBUCKET_FRONTEND_REPO`  
   Frontend repo path in `workspace/repo` format (example: `digitechafrica/noya_frontend`).
 - `BITBUCKET_BACKEND_REPO`  
@@ -16,10 +18,8 @@ Create these repository secrets in GitHub (`Settings` -> `Secrets and variables`
 Bitbucket token note:
 
 - The workflow authenticates with `https://x-token-auth:<TOKEN>@bitbucket.org/...`.
-- If your token is scoped only to backend repo, frontend clone will fail.
-- Use either:
-  - two tokens (frontend + backend), or
-  - one Workspace Access Token that can access both repositories.
+- If backend and frontend use separate Repository Access Tokens, store both tokens separately.
+- If you use one Workspace Access Token for both repos, you can set the same value in both secrets.
 
 ## GitHub backend mirror
 
@@ -51,7 +51,8 @@ GitHub Actions limitation:
 ## Expected 12 secrets
 
 - `BITBUCKET_USERNAME`
-- `BITBUCKET_APP_PASSWORD`
+- `BITBUCKET_BACKEND_TOKEN`
+- `BITBUCKET_FRONTEND_TOKEN`
 - `BITBUCKET_FRONTEND_REPO`
 - `BITBUCKET_BACKEND_REPO`
 - `GH_BACKEND_REPO`
