@@ -173,6 +173,7 @@ jobs:
             -e "ssh -p $HOSTINGER_PORT -o StrictHostKeyChecking=accept-new" \
             --exclude '.git/' \
             --exclude '.env' \
+            --exclude 'frontend-src/' \
             --exclude 'vendor/' \
             --exclude 'node_modules/' \
             --exclude 'storage/logs/' \
