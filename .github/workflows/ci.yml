@@ -150,15 +150,6 @@ jobs:
           npm ci
           npm run build
 
-      - name: Push frontend to Bitbucket
-        env:
-          BITBUCKET_FRONTEND_TOKEN: ${{ secrets.BITBUCKET_FRONTEND_TOKEN }}
-          BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
-        working-directory: frontend-src
-        run: |
-          git remote set-url origin "https://x-token-auth:${BITBUCKET_FRONTEND_TOKEN}@bitbucket.org/${BITBUCKET_FRONTEND_REPO}.git"
-          git push origin main
-
       - name: Sync frontend to Hostinger
         env:
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
