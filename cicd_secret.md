@@ -40,13 +40,6 @@ GitHub Actions limitation:
 - `HOSTINGER_BACK_DIR`  
   Backend target directory (example: `/home/u626597620/domains/mebodorichard.com/public_html/noya`).
 
-## Trigger
-
-The pipeline runs automatically on:
-
-- push to `main`
-- manual trigger (`workflow_dispatch`) from GitHub Actions UI
-
 ## Expected 12 secrets
 
 - `BITBUCKET_USERNAME`
@@ -61,3 +54,10 @@ The pipeline runs automatically on:
 - `HOSTINGER_PASSWORD`
 - `HOSTINGER_FRONT_DIR`
 - `HOSTINGER_BACK_DIR`
+
+## Trigger
+
+The pipeline runs automatically on:
+
+- push to `main`
+- manual trigger (`workflow_dispatch`) from GitHub Actions UI

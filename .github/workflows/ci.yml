@@ -63,8 +63,10 @@ jobs:
           BITBUCKET_APP_PASSWORD: ${{ secrets.BITBUCKET_APP_PASSWORD }}
           BITBUCKET_FRONTEND_REPO: ${{ secrets.BITBUCKET_FRONTEND_REPO }}
           BITBUCKET_BACKEND_REPO: ${{ secrets.BITBUCKET_BACKEND_REPO }}
-          GITHUB_BACKEND_REPO: ${{ secrets.GITHUB_BACKEND_REPO }}
-          GITHUB_BACKEND_PAT: ${{ secrets.GITHUB_BACKEND_PAT }}
+          GH_BACKEND_REPO: ${{ secrets.GH_BACKEND_REPO }}
+          GH_BACKEND_PAT: ${{ secrets.GH_BACKEND_PAT }}
+          GITHUB_BACKEND_REPO: ${{ secrets.GH_BACKEND_REPO }}
+          GITHUB_BACKEND_PAT: ${{ secrets.GH_BACKEND_PAT }}
           HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
           HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
           HOSTINGER_USER: ${{ secrets.HOSTINGER_USER }}
@@ -78,8 +80,8 @@ jobs:
             BITBUCKET_APP_PASSWORD
             BITBUCKET_FRONTEND_REPO
             BITBUCKET_BACKEND_REPO
-            GITHUB_BACKEND_REPO
-            GITHUB_BACKEND_PAT
+            GH_BACKEND_REPO
+            GH_BACKEND_PAT
             HOSTINGER_HOST
             HOSTINGER_PORT
             HOSTINGER_USER
@@ -116,8 +118,8 @@ jobs:
 
       - name: Push backend to GitHub (mirror)
         env:
-          GITHUB_BACKEND_REPO: ${{ secrets.GITHUB_BACKEND_REPO }}
-          GITHUB_BACKEND_PAT: ${{ secrets.GITHUB_BACKEND_PAT }}
+          GITHUB_BACKEND_REPO: ${{ secrets.GH_BACKEND_REPO }}
+          GITHUB_BACKEND_PAT: ${{ secrets.GH_BACKEND_PAT }}
         run: |
           set -euo pipefail
           git remote add github-mirror "https://x-access-token:${GITHUB_BACKEND_PAT}@github.com/${GITHUB_BACKEND_REPO}.git"
