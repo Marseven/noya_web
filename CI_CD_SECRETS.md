@@ -5,13 +5,21 @@ Create these repository secrets in GitHub (`Settings` -> `Secrets and variables`
 ## Bitbucket
 
 - `BITBUCKET_USERNAME`  
-  Bitbucket username (example: `digitechafrica`).
+  Optional legacy username (example: `digitechafrica`), not used when `x-token-auth` is enabled.
 - `BITBUCKET_APP_PASSWORD`  
-  Bitbucket App Password with at least repository read/write permissions.
+  Bitbucket token used with `x-token-auth` in Git remote URLs.
 - `BITBUCKET_FRONTEND_REPO`  
   Frontend repo path in `workspace/repo` format (example: `digitechafrica/noya_frontend`).
 - `BITBUCKET_BACKEND_REPO`  
   Backend repo path in `workspace/repo` format (example: `digitechafrica/noya_web`).
+
+Bitbucket token note:
+
+- The workflow authenticates with `https://x-token-auth:<TOKEN>@bitbucket.org/...`.
+- If your token is scoped only to backend repo, frontend clone will fail.
+- Use either:
+  - two tokens (frontend + backend), or
+  - one Workspace Access Token that can access both repositories.
 
 ## GitHub backend mirror
 
